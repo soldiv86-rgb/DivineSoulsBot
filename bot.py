@@ -5,11 +5,13 @@ import discord
 from discord.ext import tasks, commands
 
 # ---- CONFIG ----
-DISCORD_TOKEN = "YOUR_BOT_TOKEN_HERE"
-DASHBOARD_CHANNEL_ID = 123456789012345678  # channel where the live dashboard posts
-REPORT_SECRET = "choose-a-long-random-string-here"  # must match the Roblox script
-OFFLINE_TIMEOUT_MULTIPLIER = 2  # mark offline if no report in (interval * this)
-WEB_SERVER_PORT = 8080
+import os
+
+DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
+DASHBOARD_CHANNEL_ID = int(os.environ["DASHBOARD_CHANNEL_ID"])
+REPORT_SECRET = os.environ["REPORT_SECRET"]
+OFFLINE_TIMEOUT_MULTIPLIER = 2
+WEB_SERVER_PORT = int(os.environ.get("PORT", 8080))
 
 # ---- STATE ----
 accounts = {}  # label -> {placeId, jobId, gameName, lastSeen, intervalSeconds}
