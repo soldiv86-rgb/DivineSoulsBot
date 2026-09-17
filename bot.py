@@ -459,35 +459,27 @@ PWA_HTML = """<!DOCTYPE html>
 <title>DivineSouls Dashboard</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icon-192.png">
-<meta name="theme-color" content="#0B0D10">
+<meta name="theme-color" content="#0d0d0f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
-  // A fleet-monitor / telemetry-feed palette built around the bot's
-  // existing brand orange (COLOR_PRIMARY) rather than a generic dashboard
-  // theme - big readouts, a log-like list, one accent used sparingly.
+  // Brand tokens live here instead of a CSS :root block, so every Tailwind
+  // utility class (bg-accent, text-online, border-borderc, etc.) below maps
+  // straight back to the bot's COLOR_PRIMARY / COLOR_ONLINE constants.
   tailwind.config = {
     theme: {
       extend: {
         colors: {
-          bg: "#0B0D10",
-          panel: "#14171B",
-          line: "#22262B",
-          ink: "#ECEDEE",
-          faint: "#7C8189",
           accent: "#FF8C28",
           accent2: "#c9631a",
+          bgmain: "#0d0d0f",
+          sidebar: "#111113",
+          card: "#17171a",
+          borderc: "#26262a",
+          muted: "#8a8a90",
           online: "#57F287",
           offline: "#ED4245",
-        },
-        fontFamily: {
-          sans: ["Inter", "system-ui", "sans-serif"],
-          display: ['"Space Grotesk"', "system-ui", "sans-serif"],
-          mono: ['"JetBrains Mono"', "monospace"],
         },
       },
     },
@@ -495,69 +487,94 @@ PWA_HTML = """<!DOCTYPE html>
 </script>
 <style>
   * { -webkit-tap-highlight-color: transparent; }
+  /* Installed, fullscreen PWA only (not a normal browser tab, which
+     already has its own chrome for this): pad for the notch/status bar
+     so content doesn't sit under it. */
   @media (display-mode: standalone) {
     body { padding-top: env(safe-area-inset-top); }
   }
-  ::-webkit-scrollbar { display: none; }
 </style>
 </head>
-<body class="m-0 min-h-screen bg-bg text-ink font-sans">
+<body class="m-0 min-h-screen bg-bgmain text-[#f2f2f2] font-sans flex flex-col">
 
-<div id="keyGate" class="fixed inset-0 bg-bg flex flex-col items-center justify-center gap-4 px-6 z-20">
-  <div class="w-11 h-11 rounded-lg bg-gradient-to-br from-accent to-accent2 flex items-center justify-center font-display font-bold text-base text-[#1a1005]">DS</div>
-  <div class="text-center">
-    <h1 class="font-display font-bold text-xl m-0">DivineSouls</h1>
-    <p class="text-faint text-sm mt-1">Fleet monitor</p>
+<div id="keyGate" class="fixed inset-0 bg-bgmain flex-col items-center justify-center gap-3.5 p-6 z-20 hidden">
+  <div class="flex items-center gap-2.5 mb-1">
+    <div class="w-9 h-9 rounded-[9px] bg-gradient-to-br from-accent to-accent2 flex items-center justify-center font-extrabold text-sm text-[#1a1005]">DS</div>
   </div>
-  <div class="flex flex-col items-center gap-2.5 mt-2 w-full max-w-[280px]">
-    <input id="keyInput" type="password" placeholder="Dashboard key" autocomplete="off"
-      class="bg-panel border border-line text-ink placeholder-faint px-4 py-3 rounded-lg text-[15px] w-full outline-none focus:border-accent">
-    <button id="keySubmit" class="bg-accent text-[#1a1005] font-semibold border-none px-4 py-3 rounded-lg text-[15px] cursor-pointer w-full">Unlock</button>
-  </div>
-  <p class="text-faint text-xs text-center max-w-[260px] leading-relaxed">Enter the DASHBOARD_KEY set on the bot to view live account status.</p>
+  <h1 class="text-lg m-0">DivineSouls <span class="text-accent">Dashboard</span></h1>
+  <p class="text-muted text-[13px] text-center max-w-[260px]">Enter your dashboard key (set as DASHBOARD_KEY on the bot) to view account status.</p>
+  <input id="keyInput" type="password" placeholder="Dashboard key" autocomplete="off"
+    class="bg-card border border-borderc text-[#f2f2f2] px-3.5 py-3 rounded-[10px] text-[15px] w-full max-w-[280px] outline-none focus:border-accent">
+  <button id="keySubmit" class="bg-accent text-[#1a1005] font-bold border-none px-5 py-3 rounded-[10px] text-[15px] cursor-pointer">Unlock</button>
 </div>
 
-<div id="app" class="hidden min-h-screen">
-  <div class="max-w-xl mx-auto px-4 pb-10">
+<div id="app" class="hidden flex-1 min-h-screen">
+  <div class="flex w-full">
 
-    <header class="flex items-center gap-3 pt-5 pb-4">
-      <div class="w-8 h-8 rounded-md bg-gradient-to-br from-accent to-accent2 flex items-center justify-center font-display font-bold text-xs text-[#1a1005] flex-shrink-0">DS</div>
-      <div class="flex-1 min-w-0">
-        <div class="font-display font-bold text-sm leading-tight">DivineSouls</div>
-        <div class="text-faint text-xs leading-tight">Fleet monitor</div>
+    <div class="sidebar fixed bottom-0 inset-x-0 md:relative md:inset-auto md:w-[220px] flex-shrink-0 bg-sidebar border-t md:border-t-0 md:border-r border-borderc p-1.5 md:p-[18px_12px] flex flex-row md:flex-col gap-0 md:gap-[22px] z-[15]">
+      <div class="hidden md:flex items-center gap-2.5 px-1.5">
+        <div class="w-[34px] h-[34px] rounded-[9px] bg-gradient-to-br from-accent to-accent2 flex items-center justify-center font-extrabold text-[13px] text-[#1a1005] flex-shrink-0">DS</div>
+        <div>
+          <div class="font-bold text-sm tracking-wide">DIVINESOULS</div>
+          <div class="text-[11px] text-muted">Account Dashboard</div>
+        </div>
       </div>
-      <button id="refreshBtn" title="Refresh" class="text-faint text-lg leading-none px-2 py-2 -mr-2 cursor-pointer bg-transparent border-none">&#8635;</button>
-    </header>
 
-    <div class="flex items-baseline gap-5 py-4 border-y border-line">
-      <div>
-        <div class="font-display font-bold text-3xl leading-none" id="numTotal">-</div>
-        <div class="text-faint text-xs mt-1.5">tracked</div>
+      <div class="flex flex-row md:flex-col flex-1 md:flex-none gap-1 md:gap-0">
+        <div class="hidden md:block text-[10px] uppercase tracking-wide text-muted px-2.5 pb-2">Monitor</div>
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-accent bg-[#1e1a14] text-accent" data-filter="all">
+          <span>Fleet</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navAll">0</span>
+        </div>
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-[#cfcfd2]" data-filter="online">
+          <span>Online</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navOnline">0</span>
+        </div>
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-[#cfcfd2]" data-filter="offline">
+          <span>Offline</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navOffline">0</span>
+        </div>
       </div>
-      <div class="w-px h-8 bg-line"></div>
-      <div>
-        <div class="font-display font-bold text-3xl leading-none text-online" id="numOnline">-</div>
-        <div class="text-faint text-xs mt-1.5">online</div>
+
+      <div class="hidden md:block">
+        <div class="text-[10px] uppercase tracking-wide text-muted px-2.5 pb-2">Account</div>
+        <div id="resetKeyNav" class="flex items-center justify-between px-2.5 py-2.5 rounded-lg text-sm text-[#cfcfd2] cursor-pointer hover:bg-[#1b1b1e]">
+          <span>Dashboard key</span>
+        </div>
       </div>
-      <div class="w-px h-8 bg-line"></div>
-      <div>
-        <div class="font-display font-bold text-3xl leading-none text-offline" id="numOffline">-</div>
-        <div class="text-faint text-xs mt-1.5">offline</div>
-      </div>
-      <div class="flex-1"></div>
-      <div class="flex items-center gap-1.5 text-faint text-xs font-mono self-end pb-0.5" id="updatedText"></div>
     </div>
 
-    <div class="sticky top-0 bg-bg pt-3 pb-2 z-10 -mx-4 px-4">
-      <div id="filterRow" class="flex gap-1 bg-panel rounded-lg p-1 mb-2.5"></div>
-      <div id="gameTabs" class="flex gap-4 overflow-x-auto"></div>
+    <div class="main flex-1 min-w-0 px-4 md:px-[22px] pt-4 md:pt-[18px] pb-[calc(84px+env(safe-area-inset-bottom))] md:pb-10">
+      <div class="max-w-[900px] mx-auto w-full">
+        <div class="flex items-center gap-3.5 flex-wrap pb-4 border-b border-borderc mb-[18px]">
+          <div class="flex gap-1.5 flex-wrap" id="gameTabs"></div>
+          <div class="flex-1"></div>
+          <div class="flex items-center gap-1.5 text-[12.5px] text-muted">
+            <span class="w-[7px] h-[7px] rounded-full bg-online shadow-[0_0_5px_#57F287]"></span>Live
+          </div>
+          <div class="text-xs text-[#5c5c62]" id="updatedText">updated just now</div>
+          <button id="refreshBtn" title="Refresh" class="bg-card border border-borderc text-muted text-[15px] px-2.5 py-1.5 rounded-lg cursor-pointer">&#8635;</button>
+        </div>
+
+        <div class="flex gap-2.5 mb-[18px]">
+          <div class="flex-1 bg-card border border-borderc rounded-[14px] px-2.5 py-3.5 text-center">
+            <div class="text-[22px] font-bold text-accent" id="numTotal">-</div>
+            <div class="text-[11px] text-muted mt-0.5 uppercase tracking-wide">Total</div>
+          </div>
+          <div class="flex-1 bg-card border border-borderc rounded-[14px] px-2.5 py-3.5 text-center">
+            <div class="text-[22px] font-bold text-online" id="numOnline">-</div>
+            <div class="text-[11px] text-muted mt-0.5 uppercase tracking-wide">Online</div>
+          </div>
+          <div class="flex-1 bg-card border border-borderc rounded-[14px] px-2.5 py-3.5 text-center">
+            <div class="text-[22px] font-bold text-offline" id="numOffline">-</div>
+            <div class="text-[11px] text-muted mt-0.5 uppercase tracking-wide">Offline</div>
+          </div>
+        </div>
+
+        <div id="list" class="flex flex-col gap-2"></div>
+
+        <footer class="text-center text-[#4a4a4f] text-[11px] pt-5 pb-1">
+          Auto-refreshes every 15s &middot; <button id="resetKey" class="bg-transparent border-none text-[#4a4a4f] underline text-[11px] cursor-pointer">reset key</button>
+        </footer>
+      </div>
     </div>
-
-    <div id="list"></div>
-
-    <footer class="text-center text-faint text-xs pt-8 pb-2">
-      Auto-refreshes every 15s &middot; <button id="resetKey" class="bg-transparent border-none text-faint underline text-xs cursor-pointer p-0">reset key</button>
-    </footer>
   </div>
 </div>
 
@@ -567,18 +584,21 @@ const gate = document.getElementById("keyGate");
 const app = document.getElementById("app");
 const list = document.getElementById("list");
 const gameTabsEl = document.getElementById("gameTabs");
-const filterRowEl = document.getElementById("filterRow");
 
 let currentFilter = "all";   // all | online | offline
 let currentGame = "all";     // "all" or a specific game name
 let lastData = null;
 let lastUpdatedAt = null;
 
-const FILTERS = [
-  { key: "all", label: "Fleet" },
-  { key: "online", label: "Online" },
-  { key: "offline", label: "Offline" },
-];
+// Tailwind utility classes swapped in/out for active vs inactive nav items,
+// since these are toggled at runtime rather than rebuilt like the game tabs.
+const NAV_ACTIVE = ["border-accent", "bg-[#1e1a14]", "text-accent"];
+const NAV_INACTIVE = ["border-transparent", "text-[#cfcfd2]"];
+
+function setNavActive(el, isActive) {
+  el.classList.remove(...NAV_ACTIVE, ...NAV_INACTIVE);
+  el.classList.add(...(isActive ? NAV_ACTIVE : NAV_INACTIVE));
+}
 
 function formatElapsed(s) {
   if (s < 60) return `${s}s`;
@@ -595,28 +615,12 @@ function escapeHtml(str) {
 }
 
 function updateAgoText() {
-  const el = document.getElementById("updatedText");
-  if (!lastUpdatedAt) { el.textContent = ""; return; }
+  if (!lastUpdatedAt) return;
   const secs = Math.floor((Date.now() - lastUpdatedAt) / 1000);
-  el.textContent = secs < 3 ? "updated now" : `updated ${formatElapsed(secs)} ago`;
+  document.getElementById("updatedText").textContent =
+    secs < 3 ? "updated just now" : `updated ${formatElapsed(secs)} ago`;
 }
 setInterval(updateAgoText, 1000);
-
-function buildFilterRow() {
-  filterRowEl.innerHTML = FILTERS.map((f) => {
-    const active = f.key === currentFilter;
-    const state = active ? "bg-line text-ink" : "text-faint";
-    return `<button data-filter="${f.key}" class="flex-1 text-sm font-medium py-2 rounded-md cursor-pointer border-none bg-transparent ${state}">${f.label}</button>`;
-  }).join("");
-
-  filterRowEl.querySelectorAll("button").forEach((el) => {
-    el.addEventListener("click", () => {
-      currentFilter = el.getAttribute("data-filter");
-      buildFilterRow();
-      render(lastData || { total: 0, online: 0, offline: 0, accounts: [] });
-    });
-  });
-}
 
 function buildGameTabs(accounts) {
   const counts = {};
@@ -630,17 +634,19 @@ function buildGameTabs(accounts) {
 
   gameTabsEl.innerHTML = tabs.map((t) => {
     const active = t.key === currentGame;
+    const base = "flex items-center gap-1.5 text-[12.5px] px-3 py-1.5 rounded-lg cursor-pointer border";
     const state = active
-      ? "text-ink border-accent"
-      : "text-faint border-transparent";
+      ? "bg-[#211c15] border-[#4a3316] text-accent"
+      : "bg-card border-borderc text-muted";
+    const badgeState = active ? "bg-accent text-[#1a1005]" : "bg-[#2a2a2e] text-[#d5d5d8]";
     return `
-      <button data-game="${escapeHtml(t.key)}" class="flex-shrink-0 text-sm py-2 border-b-2 cursor-pointer bg-transparent whitespace-nowrap ${state}">
-        ${escapeHtml(t.label)} <span class="font-mono text-xs text-faint">${t.count}</span>
-      </button>
+      <div class="tab ${base} ${state}" data-game="${escapeHtml(t.key)}">
+        ${escapeHtml(t.label)} <span class="text-[10.5px] px-1.5 py-0.5 rounded-full ${badgeState}">${t.count}</span>
+      </div>
     `;
   }).join("");
 
-  gameTabsEl.querySelectorAll("button").forEach((el) => {
+  gameTabsEl.querySelectorAll(".tab").forEach((el) => {
     el.addEventListener("click", () => {
       currentGame = el.getAttribute("data-game");
       render(lastData);
@@ -656,6 +662,9 @@ function render(data) {
   document.getElementById("numTotal").textContent = data.total;
   document.getElementById("numOnline").textContent = data.online;
   document.getElementById("numOffline").textContent = data.offline;
+  document.getElementById("navAll").textContent = data.total;
+  document.getElementById("navOnline").textContent = data.online;
+  document.getElementById("navOffline").textContent = data.offline;
 
   const accounts = data.accounts || [];
   buildGameTabs(accounts);
@@ -668,44 +677,24 @@ function render(data) {
   });
 
   if (filtered.length === 0) {
-    list.innerHTML = `<div class="text-center text-faint text-sm py-16">Nothing here yet. Accounts show up as soon as they report in.</div>`;
+    list.innerHTML = `<div class="text-center text-muted py-[60px] px-5 text-sm">No accounts match this view.</div>`;
     return;
   }
 
-  const byGame = {};
-  const order = [];
-  filtered.forEach((a) => {
-    if (!byGame[a.game]) { byGame[a.game] = []; order.push(a.game); }
-    byGame[a.game].push(a);
-  });
-
-  list.innerHTML = order.map((game) => {
-    const rows = byGame[game].map((a) => {
-      const barColor = a.online ? "bg-online" : "bg-offline";
-      const statusText = a.online ? "online" : formatElapsed(a.lastSeenSecondsAgo) + " ago";
-      const statusColor = a.online ? "text-online" : "text-faint";
-      const joinBtn = a.online && a.joinUrl
-        ? `<a class="text-accent text-sm font-medium px-2 py-1.5 -mr-2 flex-shrink-0" href="${a.joinUrl}">Join</a>`
-        : "";
-      return `
-        <div class="flex items-center gap-3 py-2.5 border-b border-line last:border-b-0">
-          <span class="w-1 self-stretch rounded-full flex-shrink-0 ${barColor}"></span>
-          <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium overflow-hidden text-ellipsis whitespace-nowrap">${escapeHtml(a.name)}</div>
-          </div>
-          <div class="text-xs font-mono ${statusColor} flex-shrink-0">${statusText}</div>
-          ${joinBtn}
-        </div>
-      `;
-    }).join("");
-
+  list.innerHTML = filtered.map((a) => {
+    const dotClass = a.online ? "bg-online shadow-[0_0_6px_#57F287]" : "bg-offline";
+    const statusText = a.online ? "online" : formatElapsed(a.lastSeenSecondsAgo) + " ago";
+    const joinBtn = a.online && a.joinUrl
+      ? `<a class="bg-accent text-[#1a1005] font-bold text-xs px-3 py-2 rounded-lg no-underline flex-shrink-0" href="${a.joinUrl}">Join</a>`
+      : "";
     return `
-      <div class="mt-5 first:mt-0">
-        <div class="flex items-baseline justify-between mb-1">
-          <div class="text-sm font-medium text-ink">${escapeHtml(game)}</div>
-          <div class="text-xs font-mono text-faint">${byGame[game].length}</div>
+      <div class="row bg-card border border-borderc rounded-xl px-3.5 py-3 flex items-center gap-3">
+        <div class="w-[9px] h-[9px] rounded-full flex-shrink-0 ${dotClass}"></div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-[14.5px] overflow-hidden text-ellipsis whitespace-nowrap">${escapeHtml(a.name)}</div>
+          <div class="text-xs text-muted mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap">${escapeHtml(a.game)} &middot; ${statusText}</div>
         </div>
-        ${rows}
+        ${joinBtn}
       </div>
     `;
   }).join("");
@@ -732,13 +721,14 @@ function showApp() {
   gate.classList.remove("flex");
   gate.classList.add("hidden");
   app.classList.remove("hidden");
-  buildFilterRow();
+  app.classList.add("flex");
   refresh();
 }
 
 function showGate() {
   gate.classList.remove("hidden");
   gate.classList.add("flex");
+  app.classList.remove("flex");
   app.classList.add("hidden");
 }
 
@@ -753,6 +743,19 @@ document.getElementById("refreshBtn").addEventListener("click", refresh);
 document.getElementById("resetKey").addEventListener("click", () => {
   localStorage.removeItem(STORAGE_KEY);
   showGate();
+});
+document.getElementById("resetKeyNav").addEventListener("click", () => {
+  localStorage.removeItem(STORAGE_KEY);
+  showGate();
+});
+
+document.querySelectorAll(".navitem[data-filter]").forEach((el) => {
+  el.addEventListener("click", () => {
+    document.querySelectorAll(".navitem[data-filter]").forEach((n) => setNavActive(n, false));
+    setNavActive(el, true);
+    currentFilter = el.getAttribute("data-filter");
+    render(lastData || { total: 0, online: 0, offline: 0, accounts: [] });
+  });
 });
 
 if (localStorage.getItem(STORAGE_KEY)) {
