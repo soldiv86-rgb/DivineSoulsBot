@@ -462,207 +462,116 @@ PWA_HTML = """<!DOCTYPE html>
 <meta name="theme-color" content="#0d0d0f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  // Brand tokens live here instead of a CSS :root block, so every Tailwind
+  // utility class (bg-accent, text-online, border-borderc, etc.) below maps
+  // straight back to the bot's COLOR_PRIMARY / COLOR_ONLINE constants.
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          accent: "#FF8C28",
+          accent2: "#c9631a",
+          bgmain: "#0d0d0f",
+          sidebar: "#111113",
+          card: "#17171a",
+          borderc: "#26262a",
+          muted: "#8a8a90",
+          online: "#57F287",
+          offline: "#ED4245",
+        },
+      },
+    },
+  };
+</script>
 <style>
-  :root {
-    --accent: #FF8C28;
-    --bg: #0d0d0f;
-    --sidebar: #111113;
-    --card: #17171a;
-    --border: #26262a;
-    --text: #f2f2f2;
-    --muted: #8a8a90;
-    --online: #57F287;
-    --offline: #ED4245;
-  }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    display: flex;
-    flex-direction: column;
-  }
-
-  #keyGate { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 24px; z-index: 20; }
-  #keyGate .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-  #keyGate .brand .mark { width: 36px; height: 36px; border-radius: 9px; background: linear-gradient(145deg, var(--accent), #c9631a); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: #1a1005; }
-  #keyGate h1 { font-size: 18px; margin: 0; }
-  #keyGate h1 span { color: var(--accent); }
-  #keyGate input { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 12px 14px; border-radius: 10px; font-size: 15px; width: 100%; max-width: 280px; }
-  #keyGate button { background: var(--accent); color: #1a1005; font-weight: 700; border: none; padding: 12px 20px; border-radius: 10px; font-size: 15px; cursor: pointer; }
-  #keyGate p { color: var(--muted); font-size: 13px; text-align: center; max-width: 260px; }
-
-  #app { display: none; flex: 1; min-height: 100vh; }
-  .shell { display: flex; width: 100%; }
-
-  .sidebar { width: 220px; flex-shrink: 0; background: var(--sidebar); border-right: 1px solid var(--border); padding: 18px 12px; display: flex; flex-direction: column; gap: 22px; }
-  .sidebar .brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
-  .sidebar .brand .mark { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(145deg, var(--accent), #c9631a); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; color: #1a1005; flex-shrink: 0; }
-  .sidebar .brand .txt .name { font-weight: 700; font-size: 14px; letter-spacing: 0.3px; }
-  .sidebar .brand .txt .sub { font-size: 11px; color: var(--muted); }
-  .navgroup .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); padding: 0 10px 8px; }
-  .navitem { display: flex; align-items: center; justify-content: space-between; padding: 9px 10px; border-radius: 9px; font-size: 13.5px; color: #cfcfd2; cursor: pointer; border-left: 2px solid transparent; margin-bottom: 2px; }
-  .navitem:hover { background: #1b1b1e; }
-  .navitem.active { background: #1e1a14; color: var(--accent); border-left: 2px solid var(--accent); }
-  .navitem .count { font-size: 11.5px; color: var(--muted); }
-  .navitem.active .count { color: var(--accent); }
-
-  .main { flex: 1; min-width: 0; padding: 18px 22px 40px; }
-  /* Caps content width so tablets/desktops (and a fullscreen installed
-     PWA, which has no browser chrome eating into the width) don't stretch
-     a handful of small cards across a huge empty page. */
-  .content { max-width: 900px; margin: 0 auto; width: 100%; }
-  .topbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
-  .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-  .tab { background: var(--card); border: 1px solid var(--border); color: var(--muted); font-size: 12.5px; padding: 7px 12px; border-radius: 9px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
-  .tab.active { background: #211c15; border-color: #4a3316; color: var(--accent); }
-  .tab .badge { background: #2a2a2e; color: #d5d5d8; font-size: 10.5px; padding: 1px 6px; border-radius: 999px; }
-  .tab.active .badge { background: var(--accent); color: #1a1005; }
-  .spacer { flex: 1; }
-  .livechip { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
-  .livechip .liveDot { width: 7px; height: 7px; border-radius: 50%; background: var(--online); box-shadow: 0 0 5px var(--online); }
-  .updatedText { font-size: 12px; color: #5c5c62; }
-  #refreshBtn { background: var(--card); border: 1px solid var(--border); color: var(--muted); font-size: 15px; padding: 7px 10px; border-radius: 9px; cursor: pointer; }
-
-  .summary { display: flex; gap: 10px; margin-bottom: 18px; }
-  .chip { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 10px; text-align: center; }
-  .chip .num { font-size: 22px; font-weight: 700; }
-  .chip .lbl { font-size: 11px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .chip.online .num { color: var(--online); }
-  .chip.offline .num { color: var(--offline); }
-  .chip.total .num { color: var(--accent); }
-
-  #list { display: flex; flex-direction: column; gap: 8px; }
-  .row { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-  .dot.online { background: var(--online); box-shadow: 0 0 6px var(--online); }
-  .dot.offline { background: var(--offline); }
-  .info { flex: 1; min-width: 0; }
-  .name { font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta { font-size: 12px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .join { background: var(--accent); color: #1a1005; font-weight: 700; font-size: 12px; padding: 8px 12px; border-radius: 9px; text-decoration: none; flex-shrink: 0; }
-  .empty { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 14px; }
-
-  footer { text-align: center; color: #4a4a4f; font-size: 11px; padding: 20px 0 4px; }
-  footer button { background: none; border: none; color: #4a4a4f; text-decoration: underline; font-size: 11px; cursor: pointer; }
-
+  * { -webkit-tap-highlight-color: transparent; }
   /* Installed, fullscreen PWA only (not a normal browser tab, which
      already has its own chrome for this): pad for the notch/status bar
-     and home indicator so content doesn't sit under them. */
+     so content doesn't sit under it. */
   @media (display-mode: standalone) {
     body { padding-top: env(safe-area-inset-top); }
   }
-
-  /* Phones: reflow the sidebar into a bottom tab bar instead of just
-     hiding it, so Fleet/Online/Offline filtering still works - the old
-     `display: none` here silently removed those filters on small screens. */
-  @media (max-width: 700px) {
-    .shell { flex-direction: column; }
-    .main { padding: 14px 14px calc(84px + env(safe-area-inset-bottom)); }
-
-    .sidebar {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      width: 100%;
-      flex-direction: row;
-      padding: 6px calc(6px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left));
-      border-right: none;
-      border-top: 1px solid var(--border);
-      gap: 0;
-      z-index: 15;
-    }
-    .sidebar .brand,
-    .sidebar .navgroup:last-child {
-      display: none;
-    }
-    .sidebar .navgroup:first-of-type {
-      display: flex;
-      flex: 1;
-      gap: 4px;
-    }
-    .navgroup .label { display: none; }
-    .navitem {
-      flex: 1;
-      flex-direction: column;
-      justify-content: center;
-      gap: 2px;
-      text-align: center;
-      border-left: none;
-      border-top: 2px solid transparent;
-      margin-bottom: 0;
-      padding: 6px 4px;
-    }
-    .navitem.active { border-left: none; border-top: 2px solid var(--accent); }
-    .navitem .count { font-size: 10.5px; }
-  }
 </style>
 </head>
-<body>
+<body class="m-0 min-h-screen bg-bgmain text-[#f2f2f2] font-sans flex flex-col">
 
-<div id="keyGate">
-  <div class="brand"><div class="mark">DS</div></div>
-  <h1>DivineSouls <span>Dashboard</span></h1>
-  <p>Enter your dashboard key (set as DASHBOARD_KEY on the bot) to view account status.</p>
-  <input id="keyInput" type="password" placeholder="Dashboard key" autocomplete="off">
-  <button id="keySubmit">Unlock</button>
+<div id="keyGate" class="fixed inset-0 bg-bgmain flex-col items-center justify-center gap-3.5 p-6 z-20 hidden">
+  <div class="flex items-center gap-2.5 mb-1">
+    <div class="w-9 h-9 rounded-[9px] bg-gradient-to-br from-accent to-accent2 flex items-center justify-center font-extrabold text-sm text-[#1a1005]">DS</div>
+  </div>
+  <h1 class="text-lg m-0">DivineSouls <span class="text-accent">Dashboard</span></h1>
+  <p class="text-muted text-[13px] text-center max-w-[260px]">Enter your dashboard key (set as DASHBOARD_KEY on the bot) to view account status.</p>
+  <input id="keyInput" type="password" placeholder="Dashboard key" autocomplete="off"
+    class="bg-card border border-borderc text-[#f2f2f2] px-3.5 py-3 rounded-[10px] text-[15px] w-full max-w-[280px] outline-none focus:border-accent">
+  <button id="keySubmit" class="bg-accent text-[#1a1005] font-bold border-none px-5 py-3 rounded-[10px] text-[15px] cursor-pointer">Unlock</button>
 </div>
 
-<div id="app">
-  <div class="shell">
-    <div class="sidebar">
-      <div class="brand">
-        <div class="mark">DS</div>
-        <div class="txt">
-          <div class="name">DIVINESOULS</div>
-          <div class="sub">Account Dashboard</div>
+<div id="app" class="hidden flex-1 min-h-screen">
+  <div class="flex w-full">
+
+    <div class="sidebar fixed bottom-0 inset-x-0 md:relative md:inset-auto md:w-[220px] flex-shrink-0 bg-sidebar border-t md:border-t-0 md:border-r border-borderc p-1.5 md:p-[18px_12px] flex flex-row md:flex-col gap-0 md:gap-[22px] z-[15]">
+      <div class="hidden md:flex items-center gap-2.5 px-1.5">
+        <div class="w-[34px] h-[34px] rounded-[9px] bg-gradient-to-br from-accent to-accent2 flex items-center justify-center font-extrabold text-[13px] text-[#1a1005] flex-shrink-0">DS</div>
+        <div>
+          <div class="font-bold text-sm tracking-wide">DIVINESOULS</div>
+          <div class="text-[11px] text-muted">Account Dashboard</div>
         </div>
       </div>
 
-      <div class="navgroup">
-        <div class="label">Monitor</div>
-        <div class="navitem active" data-filter="all">
-          <span>Fleet</span><span class="count" id="navAll">0</span>
+      <div class="flex flex-row md:flex-col flex-1 md:flex-none gap-1 md:gap-0">
+        <div class="hidden md:block text-[10px] uppercase tracking-wide text-muted px-2.5 pb-2">Monitor</div>
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-accent bg-[#1e1a14] text-accent" data-filter="all">
+          <span>Fleet</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navAll">0</span>
         </div>
-        <div class="navitem" data-filter="online">
-          <span>Online</span><span class="count" id="navOnline">0</span>
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-[#cfcfd2]" data-filter="online">
+          <span>Online</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navOnline">0</span>
         </div>
-        <div class="navitem" data-filter="offline">
-          <span>Offline</span><span class="count" id="navOffline">0</span>
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-[#cfcfd2]" data-filter="offline">
+          <span>Offline</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navOffline">0</span>
         </div>
       </div>
 
-      <div class="navgroup">
-        <div class="label">Account</div>
-        <div class="navitem" id="resetKeyNav">
+      <div class="hidden md:block">
+        <div class="text-[10px] uppercase tracking-wide text-muted px-2.5 pb-2">Account</div>
+        <div id="resetKeyNav" class="flex items-center justify-between px-2.5 py-2.5 rounded-lg text-sm text-[#cfcfd2] cursor-pointer hover:bg-[#1b1b1e]">
           <span>Dashboard key</span>
         </div>
       </div>
     </div>
 
-    <div class="main">
-      <div class="content">
-        <div class="topbar">
-          <div class="tabs" id="gameTabs"></div>
-          <div class="spacer"></div>
-          <div class="livechip"><span class="liveDot"></span>Live</div>
-          <div class="updatedText" id="updatedText">updated just now</div>
-          <button id="refreshBtn" title="Refresh">&#8635;</button>
+    <div class="main flex-1 min-w-0 px-4 md:px-[22px] pt-4 md:pt-[18px] pb-[calc(84px+env(safe-area-inset-bottom))] md:pb-10">
+      <div class="max-w-[900px] mx-auto w-full">
+        <div class="flex items-center gap-3.5 flex-wrap pb-4 border-b border-borderc mb-[18px]">
+          <div class="flex gap-1.5 flex-wrap" id="gameTabs"></div>
+          <div class="flex-1"></div>
+          <div class="flex items-center gap-1.5 text-[12.5px] text-muted">
+            <span class="w-[7px] h-[7px] rounded-full bg-online shadow-[0_0_5px_#57F287]"></span>Live
+          </div>
+          <div class="text-xs text-[#5c5c62]" id="updatedText">updated just now</div>
+          <button id="refreshBtn" title="Refresh" class="bg-card border border-borderc text-muted text-[15px] px-2.5 py-1.5 rounded-lg cursor-pointer">&#8635;</button>
         </div>
 
-        <div class="summary">
-          <div class="chip total"><div class="num" id="numTotal">-</div><div class="lbl">Total</div></div>
-          <div class="chip online"><div class="num" id="numOnline">-</div><div class="lbl">Online</div></div>
-          <div class="chip offline"><div class="num" id="numOffline">-</div><div class="lbl">Offline</div></div>
+        <div class="flex gap-2.5 mb-[18px]">
+          <div class="flex-1 bg-card border border-borderc rounded-[14px] px-2.5 py-3.5 text-center">
+            <div class="text-[22px] font-bold text-accent" id="numTotal">-</div>
+            <div class="text-[11px] text-muted mt-0.5 uppercase tracking-wide">Total</div>
+          </div>
+          <div class="flex-1 bg-card border border-borderc rounded-[14px] px-2.5 py-3.5 text-center">
+            <div class="text-[22px] font-bold text-online" id="numOnline">-</div>
+            <div class="text-[11px] text-muted mt-0.5 uppercase tracking-wide">Online</div>
+          </div>
+          <div class="flex-1 bg-card border border-borderc rounded-[14px] px-2.5 py-3.5 text-center">
+            <div class="text-[22px] font-bold text-offline" id="numOffline">-</div>
+            <div class="text-[11px] text-muted mt-0.5 uppercase tracking-wide">Offline</div>
+          </div>
         </div>
 
-        <div id="list"></div>
+        <div id="list" class="flex flex-col gap-2"></div>
 
-        <footer>
-          Auto-refreshes every 15s &middot; <button id="resetKey">reset key</button>
+        <footer class="text-center text-[#4a4a4f] text-[11px] pt-5 pb-1">
+          Auto-refreshes every 15s &middot; <button id="resetKey" class="bg-transparent border-none text-[#4a4a4f] underline text-[11px] cursor-pointer">reset key</button>
         </footer>
       </div>
     </div>
@@ -680,6 +589,16 @@ let currentFilter = "all";   // all | online | offline
 let currentGame = "all";     // "all" or a specific game name
 let lastData = null;
 let lastUpdatedAt = null;
+
+// Tailwind utility classes swapped in/out for active vs inactive nav items,
+// since these are toggled at runtime rather than rebuilt like the game tabs.
+const NAV_ACTIVE = ["border-accent", "bg-[#1e1a14]", "text-accent"];
+const NAV_INACTIVE = ["border-transparent", "text-[#cfcfd2]"];
+
+function setNavActive(el, isActive) {
+  el.classList.remove(...NAV_ACTIVE, ...NAV_INACTIVE);
+  el.classList.add(...(isActive ? NAV_ACTIVE : NAV_INACTIVE));
+}
 
 function formatElapsed(s) {
   if (s < 60) return `${s}s`;
@@ -713,11 +632,19 @@ function buildGameTabs(accounts) {
   const tabs = [{ key: "all", label: "All games", count: accounts.length }]
     .concat(games.map((g) => ({ key: g, label: g, count: counts[g] })));
 
-  gameTabsEl.innerHTML = tabs.map((t) => `
-    <div class="tab ${t.key === currentGame ? "active" : ""}" data-game="${escapeHtml(t.key)}">
-      ${escapeHtml(t.label)} <span class="badge">${t.count}</span>
-    </div>
-  `).join("");
+  gameTabsEl.innerHTML = tabs.map((t) => {
+    const active = t.key === currentGame;
+    const base = "flex items-center gap-1.5 text-[12.5px] px-3 py-1.5 rounded-lg cursor-pointer border";
+    const state = active
+      ? "bg-[#211c15] border-[#4a3316] text-accent"
+      : "bg-card border-borderc text-muted";
+    const badgeState = active ? "bg-accent text-[#1a1005]" : "bg-[#2a2a2e] text-[#d5d5d8]";
+    return `
+      <div class="tab ${base} ${state}" data-game="${escapeHtml(t.key)}">
+        ${escapeHtml(t.label)} <span class="text-[10.5px] px-1.5 py-0.5 rounded-full ${badgeState}">${t.count}</span>
+      </div>
+    `;
+  }).join("");
 
   gameTabsEl.querySelectorAll(".tab").forEach((el) => {
     el.addEventListener("click", () => {
@@ -750,20 +677,22 @@ function render(data) {
   });
 
   if (filtered.length === 0) {
-    list.innerHTML = `<div class="empty">No accounts match this view.</div>`;
+    list.innerHTML = `<div class="text-center text-muted py-[60px] px-5 text-sm">No accounts match this view.</div>`;
     return;
   }
 
   list.innerHTML = filtered.map((a) => {
-    const dotClass = a.online ? "online" : "offline";
+    const dotClass = a.online ? "bg-online shadow-[0_0_6px_#57F287]" : "bg-offline";
     const statusText = a.online ? "online" : formatElapsed(a.lastSeenSecondsAgo) + " ago";
-    const joinBtn = a.online && a.joinUrl ? `<a class="join" href="${a.joinUrl}">Join</a>` : "";
+    const joinBtn = a.online && a.joinUrl
+      ? `<a class="bg-accent text-[#1a1005] font-bold text-xs px-3 py-2 rounded-lg no-underline flex-shrink-0" href="${a.joinUrl}">Join</a>`
+      : "";
     return `
-      <div class="row">
-        <div class="dot ${dotClass}"></div>
-        <div class="info">
-          <div class="name">${escapeHtml(a.name)}</div>
-          <div class="meta">${escapeHtml(a.game)} &middot; ${statusText}</div>
+      <div class="row bg-card border border-borderc rounded-xl px-3.5 py-3 flex items-center gap-3">
+        <div class="w-[9px] h-[9px] rounded-full flex-shrink-0 ${dotClass}"></div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-[14.5px] overflow-hidden text-ellipsis whitespace-nowrap">${escapeHtml(a.name)}</div>
+          <div class="text-xs text-muted mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap">${escapeHtml(a.game)} &middot; ${statusText}</div>
         </div>
         ${joinBtn}
       </div>
@@ -789,14 +718,18 @@ async function refresh() {
 }
 
 function showApp() {
-  gate.style.display = "none";
-  app.style.display = "block";
+  gate.classList.remove("flex");
+  gate.classList.add("hidden");
+  app.classList.remove("hidden");
+  app.classList.add("flex");
   refresh();
 }
 
 function showGate() {
-  gate.style.display = "flex";
-  app.style.display = "none";
+  gate.classList.remove("hidden");
+  gate.classList.add("flex");
+  app.classList.remove("flex");
+  app.classList.add("hidden");
 }
 
 document.getElementById("keySubmit").addEventListener("click", () => {
@@ -818,8 +751,8 @@ document.getElementById("resetKeyNav").addEventListener("click", () => {
 
 document.querySelectorAll(".navitem[data-filter]").forEach((el) => {
   el.addEventListener("click", () => {
-    document.querySelectorAll(".navitem[data-filter]").forEach((n) => n.classList.remove("active"));
-    el.classList.add("active");
+    document.querySelectorAll(".navitem[data-filter]").forEach((n) => setNavActive(n, false));
+    setNavActive(el, true);
     currentFilter = el.getAttribute("data-filter");
     render(lastData || { total: 0, online: 0, offline: 0, accounts: [] });
   });
