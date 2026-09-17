@@ -1,20 +1,40 @@
 import asyncio
+import hmac
+import json
 import logging
 import os
 import time
+from pathlib import Path
 
 from aiohttp import web
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 # ---- CONFIG ----
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
 DASHBOARD_CHANNEL_ID = int(os.environ["DASHBOARD_CHANNEL_ID"])
 REPORT_SECRET = os.environ["REPORT_SECRET"]
+
 OFFLINE_TIMEOUT_MULTIPLIER = 2
 WEB_SERVER_PORT = int(os.environ.get("PORT", 8080))
 PAGE_SIZE = 10           # accounts per Status page
 MAX_EMBED_FIELDS = 24    # Discord's real cap is 25 - reserve 1 for an overflow notice, just in case
+
+# Where the dashboard is persisted between restarts. NOTE: on Render's free
+# tier there is no persistent disk, so this file only survives a crash that
+# restarts the SAME container - it will NOT survive a redeploy or a free-tier
+# spin-down that provisions a fresh container. A paid plan + attached disk
+# is required for that. Still strictly better than pure in-memory state.
+DATA_FILE = Path(os.environ.get("DATA_FILE", "accounts.json"))
+
+# ---- BRAND / UI ----
+# One accent color used everywhere so every embed reads as the same product
+# instead of a pile of ad-hoc commands. Green/red are reserved for
+# online/offline signal so they stay meaningful instead of decorative.
+COLOR_PRIMARY = 0xFF8C28
+COLOR_ONLINE = 0x57F287
+FOOTER_TEXT = "DivineSouls Dashboard"
 
 # ---- STATE ----
 # Keyed by the account's stable Roblox userId (as a string) when the
@@ -23,11 +43,42 @@ MAX_EMBED_FIELDS = 24    # Discord's real cap is 25 - reserve 1 for an overflow 
 # reporter script - keeps old accounts from erroring out mid-transition.
 accounts = {}  # key -> {placeId, jobId, gameName, playerName, userId, lastSeen, intervalSeconds}
 
+# Slash commands don't need the privileged message_content intent at all.
 intents = discord.Intents.default()
-intents.message_content = True  # needed for the !panel/!remove text commands
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+_panel_view_registered = False
 
+
+# ---- PERSISTENCE ----
+def load_accounts():
+    global accounts
+    if DATA_FILE.exists():
+        try:
+            with open(DATA_FILE, "r") as f:
+                accounts = json.load(f)
+            print(f"Loaded {len(accounts)} account(s) from {DATA_FILE}", flush=True)
+        except Exception as e:
+            print(f"Could not read {DATA_FILE} ({e}) - starting with an empty dashboard.", flush=True)
+            accounts = {}
+    else:
+        accounts = {}
+
+
+def save_accounts():
+    """Atomic write: write to a temp file then rename over the real one, so
+    a crash mid-write can never leave accounts.json half-written/corrupt -
+    a rename is atomic on POSIX, a direct write to the destination isn't."""
+    try:
+        tmp_path = DATA_FILE.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
+            json.dump(accounts, f)
+        tmp_path.replace(DATA_FILE)
+    except Exception as e:
+        print(f"Failed to save accounts to {DATA_FILE}: {e}", flush=True)
+
+
+# ---- HELPERS ----
 def format_elapsed(seconds):
     seconds = int(seconds)
     if seconds < 60:
@@ -54,10 +105,20 @@ def sorted_accounts():
     return sorted(accounts.items(), key=lambda kv: display_name(kv[0], kv[1]).lower())
 
 
+def styled_embed(title, color=COLOR_PRIMARY, description=None):
+    """Every embed in the bot goes through this so title casing, footer,
+    and timestamp stay consistent instead of copy-pasted per command."""
+    embed = discord.Embed(title=title, color=color, timestamp=discord.utils.utcnow())
+    if description:
+        embed.description = description
+    embed.set_footer(text=FOOTER_TEXT)
+    return embed
+
+
 def build_user_list():
     """Quick flat online/offline list, no game info - the faster-glance
     alternative to the full Status paginator."""
-    embed = discord.Embed(title="👥 Accounts", color=0xFF8C28)
+    embed = styled_embed("👥 Accounts")
     if not accounts:
         embed.description = "No accounts reporting yet."
         return embed
@@ -70,6 +131,27 @@ def build_user_list():
         status = "🟢 Online" if online else "🔴 Offline"
         lines.append(f"**{name}** - {status}")
     embed.description = "\n".join(lines)
+    return embed
+
+
+def build_summary_embed():
+    now = time.time()
+    total = len(accounts)
+    online = sum(1 for _, data in accounts.items() if is_account_online(data, now))
+    offline = total - online
+
+    embed = styled_embed("📊 Summary")
+    embed.add_field(name="Total", value=str(total), inline=True)
+    embed.add_field(name="🟢 Online", value=str(online), inline=True)
+    embed.add_field(name="🔴 Offline", value=str(offline), inline=True)
+    return embed
+
+
+def build_panel_embed():
+    embed = styled_embed(
+        "🎮 DivineSouls Control Panel",
+        description="Click a button below to check your accounts.",
+    )
     return embed
 
 
@@ -105,7 +187,7 @@ class StatusView(discord.ui.View):
 
     def build_embed(self):
         total = len(accounts)
-        embed = discord.Embed(title="📡 Account Status", color=0xFF8C28)
+        embed = styled_embed("📡 Account Status")
         if total == 0:
             embed.description = "No accounts reporting yet."
             return embed
@@ -149,7 +231,7 @@ class StatusView(discord.ui.View):
                 )
                 fields_used += 1
 
-        embed.set_footer(text=f"Page {self.page + 1} of {self.max_page() + 1} • {total} account(s) total")
+        embed.set_footer(text=f"{FOOTER_TEXT} • Page {self.page + 1} of {self.max_page() + 1} • {total} account(s)")
         return embed
 
     def rebuild(self):
@@ -232,6 +314,60 @@ class PanelView(discord.ui.View):
         embed = build_user_list()
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @discord.ui.button(label="📊 Summary", style=discord.ButtonStyle.primary, custom_id="panel_summary_v1")
+    async def summary_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = build_summary_embed()
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ---- SLASH COMMANDS (restricted to DASHBOARD_CHANNEL_ID) ----
+def in_dashboard_channel():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.channel_id != DASHBOARD_CHANNEL_ID:
+            await interaction.response.send_message(
+                f"This command only works in <#{DASHBOARD_CHANNEL_ID}>.",
+                ephemeral=True,
+            )
+            return False
+        return True
+    return app_commands.check(predicate)
+
+
+@bot.tree.command(name="panel", description="Post the persistent DivineSouls control panel in this channel.")
+@in_dashboard_channel()
+async def panel_command(interaction: discord.Interaction):
+    """Posts the persistent control panel. Its buttons keep working forever,
+    even across bot restarts - you only need to run this once."""
+    await interaction.response.send_message(embed=build_panel_embed(), view=PanelView())
+
+
+@bot.tree.command(name="remove", description="Remove an account from the dashboard.")
+@app_commands.describe(key="The account to remove (pick from the list, or type a username/userId)")
+@in_dashboard_channel()
+async def remove_command(interaction: discord.Interaction, key: str):
+    """Remove an account from the dashboard permanently (e.g. retired for
+    good). Use the username shown on the Status panel - or the userId if
+    you need to disambiguate."""
+    if key in accounts:
+        del accounts[key]
+        save_accounts()
+        await interaction.response.send_message(f"Removed **{key}** from the dashboard.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"No account found for `{key}`.", ephemeral=True)
+
+
+@remove_command.autocomplete("key")
+async def remove_autocomplete(interaction: discord.Interaction, current: str):
+    current = current.lower()
+    choices = []
+    for key, data in sorted_accounts():
+        name = display_name(key, data)
+        if current in name.lower() or current in key.lower():
+            choices.append(app_commands.Choice(name=name, value=key))
+        if len(choices) >= 25:  # Discord's hard cap on autocomplete choices
+            break
+    return choices
+
 
 # ---- HTTP endpoints ----
 async def handle_report(request):
@@ -240,7 +376,9 @@ async def handle_report(request):
     except Exception:
         return web.json_response({"error": "invalid json"}, status=400)
 
-    if data.get("secret") != REPORT_SECRET:
+    # Constant-time comparison so response timing can't leak how many
+    # leading characters of the secret were correct.
+    if not hmac.compare_digest(str(data.get("secret", "")), REPORT_SECRET):
         return web.json_response({"error": "unauthorized"}, status=401)
 
     # Identity priority: userId (stable, survives renames) > playerName >
@@ -263,6 +401,7 @@ async def handle_report(request):
         "lastSeen": time.time(),
         "intervalSeconds": data.get("intervalSeconds", 300),
     }
+    save_accounts()
     return web.json_response({"ok": True})
 
 
@@ -280,7 +419,12 @@ async def start_web_server():
     await site.start()
 
 
-_panel_view_registered = False
+@bot.event
+async def setup_hook():
+    # Sync the slash command tree once at startup. This talks to Discord's
+    # API, so it's here (called once by discord.py before login finishes)
+    # rather than in on_ready, which can re-fire on every gateway reconnect.
+    await bot.tree.sync()
 
 
 @bot.event
@@ -294,32 +438,9 @@ async def on_ready():
         _panel_view_registered = True
 
 
-@bot.command()
-async def panel(ctx):
-    """Posts the persistent control panel. Its buttons keep working forever,
-    even across bot restarts - you only need to run this once."""
-    embed = discord.Embed(
-        title="🎮 DivineSouls Control Panel",
-        description="Click a button below to check your accounts.",
-        color=0xFF8C28,
-    )
-    await ctx.send(embed=embed, view=PanelView())
-
-
-@bot.command()
-async def remove(ctx, key: str):
-    """Remove an account from the dashboard permanently (e.g. retired for
-    good). Use the username shown on the Status panel - or the userId if
-    you need to disambiguate."""
-    if key in accounts:
-        del accounts[key]
-        await ctx.send(f"Removed `{key}` from the dashboard.")
-    else:
-        await ctx.send(f"No account found for `{key}`.")
-
-
 async def main():
     discord.utils.setup_logging(level=logging.INFO)
+    load_accounts()
     asyncio.create_task(start_web_server())
     await bot.start(DISCORD_TOKEN)
 
