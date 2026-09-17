@@ -187,7 +187,7 @@ async def remove(ctx, label: str):
     else:
         await ctx.send(f"No account labeled `{label}` found.")
 
-
+@bot.command() async def ping(ctx): await ctx.send("pong") Redeploy, then type !ping
 async def main():
     load_dashboard_message_id()
     asyncio.create_task(start_web_server())
