@@ -387,8 +387,8 @@ MANIFEST_JSON = json.dumps({
     "start_url": "/dashboard",
     "scope": "/",
     "display": "standalone",
-    "background_color": "#161616",
-    "theme_color": "#FF8C28",
+    "background_color": "#0d0d0f",
+    "theme_color": "#0d0d0f",
     "icons": [
         {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
         {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
@@ -396,7 +396,13 @@ MANIFEST_JSON = json.dumps({
 })
 
 SW_JS = """
-const CACHE_NAME = "ds-dashboard-v1";
+// Bump this on every deploy that changes PWA_HTML/manifest/icons. The old
+// cache-first strategy meant an installed PWA could get permanently stuck
+// on the HTML it first cached, drifting out of sync with what a plain
+// browser tab (which just hits the network) shows. Network-first for the
+// shell below fixes that; bumping the name here also forces any previously
+// installed app to drop its stale cache on this deploy.
+const CACHE_NAME = "ds-dashboard-v2";
 const SHELL = ["/dashboard", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -413,6 +419,7 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
+
   if (url.pathname === "/status") {
     event.respondWith(
       fetch(event.request).catch(
@@ -423,6 +430,23 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
+
+  // Network-first for the app shell (HTML/manifest/icons) so the installed
+  // PWA always shows what's currently deployed - same as a fresh browser
+  // tab would - and only falls back to the cached copy when offline.
+  if (SHELL.includes(url.pathname)) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
   event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
 });
 """
