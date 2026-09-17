@@ -1,12 +1,11 @@
 import asyncio
-import json
 import logging
 import os
 import time
 
 from aiohttp import web
 import discord
-from discord.ext import tasks, commands
+from discord.ext import commands
 
 # ---- CONFIG ----
 DISCORD_TOKEN = os.environ["DISCORD_TOKEN"]
@@ -14,36 +13,13 @@ DASHBOARD_CHANNEL_ID = int(os.environ["DASHBOARD_CHANNEL_ID"])
 REPORT_SECRET = os.environ["REPORT_SECRET"]
 OFFLINE_TIMEOUT_MULTIPLIER = 2
 WEB_SERVER_PORT = int(os.environ.get("PORT", 8080))
-STATE_FILE = "dashboard_state.json"  # just the message id, so a restart doesn't spawn a duplicate dashboard message
+MAX_JOIN_BUTTONS = 25  # Discord's hard cap on components per view (5 rows x 5)
 
 # ---- STATE ----
 accounts = {}  # label -> {placeId, jobId, gameName, lastSeen, intervalSeconds}
-dashboard_message_id = None
-
-
-def load_dashboard_message_id():
-    global dashboard_message_id
-    try:
-        with open(STATE_FILE, "r") as f:
-            dashboard_message_id = json.load(f).get("dashboard_message_id")
-    except (FileNotFoundError, json.JSONDecodeError):
-        dashboard_message_id = None
-
-
-def save_dashboard_message_id():
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump({"dashboard_message_id": dashboard_message_id}, f)
-    except OSError:
-        pass
-
 
 intents = discord.Intents.default()
-# Required for prefix commands (!dashboard, !remove) to receive message text
-# at all in discord.py 2.x. You ALSO need to flip "Message Content Intent"
-# on for this bot in the Discord Developer Portal (Bot tab) - the code-side
-# flag alone isn't enough, it's a privileged intent.
-intents.message_content = True
+intents.message_content = True  # needed for the !panel/!dashboard/!userlist/!remove text commands
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -58,67 +34,100 @@ def format_elapsed(seconds):
     return f"{hours}h {minutes}m"
 
 
-def build_dashboard_embed():
-    embed = discord.Embed(title="Account Dashboard", color=0xFF8C28)
+def is_account_online(data, now):
+    return (now - data["lastSeen"]) <= data["intervalSeconds"] * OFFLINE_TIMEOUT_MULTIPLIER
+
+
+def build_join_view(entries_with_join_info):
+    """entries_with_join_info: list of (label, placeId, jobId). Returns a
+    View of link buttons, or None if there's nothing to add - link buttons
+    don't need custom_id/persistence since Discord opens the URL directly
+    without ever calling back into the bot."""
+    view = discord.ui.View(timeout=None)
+    for label, place_id, job_id in entries_with_join_info:
+        if len(view.children) >= MAX_JOIN_BUTTONS:
+            break
+        if place_id and job_id:
+            join_url = f"https://www.roblox.com/games/start?placeId={place_id}&gameInstanceId={job_id}"
+            view.add_item(discord.ui.Button(label=f"Join {label}", url=join_url))
+    return view if view.children else None
+
+
+def build_grouped_dashboard():
+    """Groups online accounts BY GAME (game name as the header, every
+    account currently playing it listed underneath), with offline accounts
+    collected under their own section at the bottom. Returns (embed, view).
+    """
+    embed = discord.Embed(title="🎮 Live Dashboard", color=0xFF8C28)
     if not accounts:
         embed.description = "No accounts reporting yet."
         return embed, None
 
-    view = discord.ui.View(timeout=None)
     now = time.time()
+    by_game = {}
+    offline_lines = []
+    join_entries = []
 
     for label, data in sorted(accounts.items()):
         elapsed = now - data["lastSeen"]
-        is_online = elapsed <= data["intervalSeconds"] * OFFLINE_TIMEOUT_MULTIPLIER
-        status = "🟢 Online" if is_online else "🔴 Offline"
+        online = is_account_online(data, now)
+        if online:
+            game = data.get("gameName") or "Unknown"
+            by_game.setdefault(game, []).append((label, elapsed))
+            join_entries.append((label, data.get("placeId"), data.get("jobId")))
+        else:
+            offline_lines.append(f"**{label}** - last seen {format_elapsed(elapsed)} ago")
 
-        embed.add_field(
-            name=f"{label} - {status}",
-            value=f"Game: {data['gameName']}\nLast seen: {format_elapsed(elapsed)} ago",
-            inline=False,
-        )
+    for game, players in sorted(by_game.items()):
+        value = "\n".join(f"🟢 **{label}** - {format_elapsed(elapsed)} ago" for label, elapsed in players)
+        embed.add_field(name=f"🎮 {game}", value=value, inline=False)
 
-        # Only show a Join button when we actually have both ids - a
-        # missing placeId/jobId would otherwise build a broken link
-        # (e.g. "...gameInstanceId=None") instead of just omitting the button.
-        if is_online and data.get("placeId") and data.get("jobId"):
-            join_url = (
-                f"https://www.roblox.com/games/start?"
-                f"placeId={data['placeId']}&gameInstanceId={data['jobId']}"
-            )
-            view.add_item(discord.ui.Button(label=f"Join {label}", url=join_url))
+    if offline_lines:
+        embed.add_field(name="🔴 Offline", value="\n".join(offline_lines), inline=False)
 
+    view = build_join_view(join_entries)
     return embed, view
 
 
-@tasks.loop(seconds=15)
-async def refresh_dashboard():
-    global dashboard_message_id
-    channel = bot.get_channel(DASHBOARD_CHANNEL_ID)
-    if not channel:
-        return
+def build_user_list():
+    """Quick flat online/offline list, no game info - the faster-glance
+    alternative to the full grouped dashboard."""
+    embed = discord.Embed(title="👥 Accounts", color=0xFF8C28)
+    if not accounts:
+        embed.description = "No accounts reporting yet."
+        return embed
 
-    embed, view = build_dashboard_embed()
+    now = time.time()
+    lines = []
+    for label, data in sorted(accounts.items()):
+        online = is_account_online(data, now)
+        status = "🟢 Online" if online else "🔴 Offline"
+        lines.append(f"**{label}** - {status}")
+    embed.description = "\n".join(lines)
+    return embed
 
-    try:
-        if dashboard_message_id is None:
-            msg = await channel.send(embed=embed, view=view)
-            dashboard_message_id = msg.id
-            save_dashboard_message_id()
+
+class PanelView(discord.ui.View):
+    """Buttons here use fixed custom_ids and timeout=None, which is what
+    makes them keep working forever - including across bot restarts -
+    once registered via bot.add_view() in on_ready, rather than being tied
+    to one specific message the way the old auto-refresh loop was."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="📊 Dashboard", style=discord.ButtonStyle.success, custom_id="panel_dashboard_v1")
+    async def dashboard_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed, view = build_grouped_dashboard()
+        if view:
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         else:
-            try:
-                msg = await channel.fetch_message(dashboard_message_id)
-                await msg.edit(embed=embed, view=view)
-            except discord.NotFound:
-                msg = await channel.send(embed=embed, view=view)
-                dashboard_message_id = msg.id
-                save_dashboard_message_id()
-    except discord.HTTPException as e:
-        # A transient Discord API hiccup (rate limit, momentary outage)
-        # shouldn't permanently kill the whole refresh loop - previously an
-        # uncaught exception here would stop tasks.loop for good until the
-        # bot process was restarted. Now it just skips this tick.
-        print(f"[dashboard] refresh failed, will retry next tick: {e}", flush=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="👥 User List", style=discord.ButtonStyle.secondary, custom_id="panel_userlist_v1")
+    async def userlist_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = build_user_list()
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ---- HTTP endpoints ----
@@ -146,9 +155,6 @@ async def handle_report(request):
 
 
 async def handle_health(request):
-    # Render (and most hosts) periodically GET "/" to check the service is
-    # alive - without this route it 404s, and the host can decide the
-    # service is unhealthy and cycle it.
     return web.json_response({"ok": True, "accounts": len(accounts)})
 
 
@@ -162,21 +168,46 @@ async def start_web_server():
     await site.start()
 
 
+_panel_view_registered = False
+
+
 @bot.event
 async def on_ready():
+    global _panel_view_registered
     print(f"Logged in as {bot.user}", flush=True)
-    if not refresh_dashboard.is_running():
-        refresh_dashboard.start()
+    # Guarded so a gateway reconnect (which re-fires on_ready) doesn't
+    # register a second copy of the same persistent view.
+    if not _panel_view_registered:
+        bot.add_view(PanelView())
+        _panel_view_registered = True
+
+
+@bot.command()
+async def panel(ctx):
+    """Posts the persistent control panel. Its buttons keep working forever,
+    even across bot restarts - you only need to run this once."""
+    embed = discord.Embed(
+        title="🎮 DivineSouls Control Panel",
+        description="Click a button below to check your accounts.",
+        color=0xFF8C28,
+    )
+    await ctx.send(embed=embed, view=PanelView())
 
 
 @bot.command()
 async def dashboard(ctx):
-    """Manually post a fresh dashboard message."""
-    global dashboard_message_id
-    embed, view = build_dashboard_embed()
-    msg = await ctx.send(embed=embed, view=view)
-    dashboard_message_id = msg.id
-    save_dashboard_message_id()
+    """Text-command equivalent of the Dashboard button."""
+    embed, view = build_grouped_dashboard()
+    if view:
+        await ctx.send(embed=embed, view=view)
+    else:
+        await ctx.send(embed=embed)
+
+
+@bot.command()
+async def userlist(ctx):
+    """Text-command equivalent of the User List button."""
+    await ctx.send(embed=build_user_list())
 
 
 @bot.command()
@@ -190,14 +221,7 @@ async def remove(ctx, label: str):
 
 
 async def main():
-    # bot.run() would normally do this for you - since we call bot.start()
-    # directly instead (so the web server can run alongside the gateway
-    # connection), discord.py's own internal logging was never being set
-    # up, meaning any warning/error IT logs about the connection or
-    # intents had nowhere to go. This makes that visible in Render's logs.
     discord.utils.setup_logging(level=logging.INFO)
-
-    load_dashboard_message_id()
     asyncio.create_task(start_web_server())
     await bot.start(DISCORD_TOKEN)
 
