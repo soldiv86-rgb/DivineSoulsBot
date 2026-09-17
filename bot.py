@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import time
 
@@ -117,7 +118,7 @@ async def refresh_dashboard():
         # shouldn't permanently kill the whole refresh loop - previously an
         # uncaught exception here would stop tasks.loop for good until the
         # bot process was restarted. Now it just skips this tick.
-        print(f"[dashboard] refresh failed, will retry next tick: {e}")
+        print(f"[dashboard] refresh failed, will retry next tick: {e}", flush=True)
 
 
 # ---- HTTP endpoints ----
@@ -163,7 +164,7 @@ async def start_web_server():
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    print(f"Logged in as {bot.user}", flush=True)
     if not refresh_dashboard.is_running():
         refresh_dashboard.start()
 
@@ -187,9 +188,15 @@ async def remove(ctx, label: str):
     else:
         await ctx.send(f"No account labeled `{label}` found.")
 
-@bot.command() async def ping(ctx): await ctx.send("pong") Redeploy, then type !ping
 
 async def main():
+    # bot.run() would normally do this for you - since we call bot.start()
+    # directly instead (so the web server can run alongside the gateway
+    # connection), discord.py's own internal logging was never being set
+    # up, meaning any warning/error IT logs about the connection or
+    # intents had nowhere to go. This makes that visible in Render's logs.
+    discord.utils.setup_logging(level=logging.INFO)
+
     load_dashboard_message_id()
     asyncio.create_task(start_web_server())
     await bot.start(DISCORD_TOKEN)
