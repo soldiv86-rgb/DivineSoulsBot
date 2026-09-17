@@ -402,7 +402,7 @@ SW_JS = """
 // browser tab (which just hits the network) shows. Network-first for the
 // shell below fixes that; bumping the name here also forces any previously
 // installed app to drop its stale cache on this deploy.
-const CACHE_NAME = "ds-dashboard-v2";
+const CACHE_NAME = "ds-dashboard-v3";
 const SHELL = ["/dashboard", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -510,6 +510,10 @@ PWA_HTML = """<!DOCTYPE html>
   .navitem.active .count { color: var(--accent); }
 
   .main { flex: 1; min-width: 0; padding: 18px 22px 40px; }
+  /* Caps content width so tablets/desktops (and a fullscreen installed
+     PWA, which has no browser chrome eating into the width) don't stretch
+     a handful of small cards across a huge empty page. */
+  .content { max-width: 900px; margin: 0 auto; width: 100%; }
   .topbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
   .tab { background: var(--card); border: 1px solid var(--border); color: var(--muted); font-size: 12.5px; padding: 7px 12px; border-radius: 9px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
@@ -544,9 +548,56 @@ PWA_HTML = """<!DOCTYPE html>
   footer { text-align: center; color: #4a4a4f; font-size: 11px; padding: 20px 0 4px; }
   footer button { background: none; border: none; color: #4a4a4f; text-decoration: underline; font-size: 11px; cursor: pointer; }
 
-  @media (max-width: 640px) {
-    .sidebar { display: none; }
-    .main { padding: 14px 14px 32px; }
+  /* Installed, fullscreen PWA only (not a normal browser tab, which
+     already has its own chrome for this): pad for the notch/status bar
+     and home indicator so content doesn't sit under them. */
+  @media (display-mode: standalone) {
+    body { padding-top: env(safe-area-inset-top); }
+  }
+
+  /* Phones: reflow the sidebar into a bottom tab bar instead of just
+     hiding it, so Fleet/Online/Offline filtering still works - the old
+     `display: none` here silently removed those filters on small screens. */
+  @media (max-width: 700px) {
+    .shell { flex-direction: column; }
+    .main { padding: 14px 14px calc(84px + env(safe-area-inset-bottom)); }
+
+    .sidebar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      flex-direction: row;
+      padding: 6px calc(6px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(6px + env(safe-area-inset-left));
+      border-right: none;
+      border-top: 1px solid var(--border);
+      gap: 0;
+      z-index: 15;
+    }
+    .sidebar .brand,
+    .sidebar .navgroup:last-child {
+      display: none;
+    }
+    .sidebar .navgroup:first-of-type {
+      display: flex;
+      flex: 1;
+      gap: 4px;
+    }
+    .navgroup .label { display: none; }
+    .navitem {
+      flex: 1;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      text-align: center;
+      border-left: none;
+      border-top: 2px solid transparent;
+      margin-bottom: 0;
+      padding: 6px 4px;
+    }
+    .navitem.active { border-left: none; border-top: 2px solid var(--accent); }
+    .navitem .count { font-size: 10.5px; }
   }
 </style>
 </head>
@@ -593,25 +644,27 @@ PWA_HTML = """<!DOCTYPE html>
     </div>
 
     <div class="main">
-      <div class="topbar">
-        <div class="tabs" id="gameTabs"></div>
-        <div class="spacer"></div>
-        <div class="livechip"><span class="liveDot"></span>Live</div>
-        <div class="updatedText" id="updatedText">updated just now</div>
-        <button id="refreshBtn" title="Refresh">&#8635;</button>
+      <div class="content">
+        <div class="topbar">
+          <div class="tabs" id="gameTabs"></div>
+          <div class="spacer"></div>
+          <div class="livechip"><span class="liveDot"></span>Live</div>
+          <div class="updatedText" id="updatedText">updated just now</div>
+          <button id="refreshBtn" title="Refresh">&#8635;</button>
+        </div>
+
+        <div class="summary">
+          <div class="chip total"><div class="num" id="numTotal">-</div><div class="lbl">Total</div></div>
+          <div class="chip online"><div class="num" id="numOnline">-</div><div class="lbl">Online</div></div>
+          <div class="chip offline"><div class="num" id="numOffline">-</div><div class="lbl">Offline</div></div>
+        </div>
+
+        <div id="list"></div>
+
+        <footer>
+          Auto-refreshes every 15s &middot; <button id="resetKey">reset key</button>
+        </footer>
       </div>
-
-      <div class="summary">
-        <div class="chip total"><div class="num" id="numTotal">-</div><div class="lbl">Total</div></div>
-        <div class="chip online"><div class="num" id="numOnline">-</div><div class="lbl">Online</div></div>
-        <div class="chip offline"><div class="num" id="numOffline">-</div><div class="lbl">Offline</div></div>
-      </div>
-
-      <div id="list"></div>
-
-      <footer>
-        Auto-refreshes every 15s &middot; <button id="resetKey">reset key</button>
-      </footer>
     </div>
   </div>
 </div>
