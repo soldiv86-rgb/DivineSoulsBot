@@ -13,13 +13,14 @@ DASHBOARD_CHANNEL_ID = int(os.environ["DASHBOARD_CHANNEL_ID"])
 REPORT_SECRET = os.environ["REPORT_SECRET"]
 OFFLINE_TIMEOUT_MULTIPLIER = 2
 WEB_SERVER_PORT = int(os.environ.get("PORT", 8080))
-MAX_JOIN_BUTTONS = 25  # Discord's hard cap on components per view (5 rows x 5)
+MAX_JOIN_BUTTONS = 25   # Discord's hard cap on components per view (5 rows x 5)
+MAX_STATUS_FIELDS = 24  # leave 1 slot free for an "+N more" notice, embeds cap at 25 fields
 
 # ---- STATE ----
-accounts = {}  # label -> {placeId, jobId, gameName, lastSeen, intervalSeconds}
+accounts = {}  # label -> {placeId, jobId, gameName, playerName, userId, lastSeen, intervalSeconds}
 
 intents = discord.Intents.default()
-intents.message_content = True  # needed for the !panel/!dashboard/!userlist/!remove text commands
+intents.message_content = True  # needed for the !panel/!remove text commands
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -35,55 +36,74 @@ def format_elapsed(seconds):
 
 
 def is_account_online(data, now):
-    return (now - data["lastSeen"]) <= data["intervalSeconds"] * OFFLINE_TIMEOUT_MULTIPLIER
+    return (now - data.get("lastSeen", 0)) <= data.get("intervalSeconds", 300) * OFFLINE_TIMEOUT_MULTIPLIER
+
+
+def display_name(label, data):
+    """Prefer the real Roblox username the reporter script sends. Falls back
+    to the account's label if an older reporter script (pre-username) is
+    still running on that account, so nothing errors or goes blank for it."""
+    return data.get("playerName") or label
 
 
 def build_join_view(entries_with_join_info):
-    """entries_with_join_info: list of (label, placeId, jobId). Returns a
-    View of link buttons, or None if there's nothing to add - link buttons
+    """entries_with_join_info: list of (displayName, placeId, jobId). Returns
+    a View of link buttons, or None if there's nothing to add - link buttons
     don't need custom_id/persistence since Discord opens the URL directly
     without ever calling back into the bot."""
     view = discord.ui.View(timeout=None)
-    for label, place_id, job_id in entries_with_join_info:
+    for name, place_id, job_id in entries_with_join_info:
         if len(view.children) >= MAX_JOIN_BUTTONS:
             break
         if place_id and job_id:
             join_url = f"https://www.roblox.com/games/start?placeId={place_id}&gameInstanceId={job_id}"
-            view.add_item(discord.ui.Button(label=f"Join {label}", url=join_url))
+            view.add_item(discord.ui.Button(label=f"Join {name}", url=join_url))
     return view if view.children else None
 
 
-def build_grouped_dashboard():
-    """Groups online accounts BY GAME (game name as the header, every
-    account currently playing it listed underneath), with offline accounts
-    collected under their own section at the bottom. Returns (embed, view).
-    """
-    embed = discord.Embed(title="🎮 Live Dashboard", color=0xFF8C28)
+def build_status_embed():
+    """One field per account: what they're playing, online/offline, and how
+    long since they last reported. Matches the reference panel's per-item
+    'Stats' card layout. Capped at MAX_STATUS_FIELDS so a large number of
+    accounts can never exceed Discord's 25-field embed limit and error out -
+    it always renders something for everyone, even if that means a trailing
+    '+N more' notice instead of a crash."""
+    embed = discord.Embed(title="📡 Account Status", color=0xFF8C28)
     if not accounts:
         embed.description = "No accounts reporting yet."
         return embed, None
 
     now = time.time()
-    by_game = {}
-    offline_lines = []
     join_entries = []
+    shown = 0
+    overflow = 0
 
     for label, data in sorted(accounts.items()):
-        elapsed = now - data["lastSeen"]
+        name = display_name(label, data)
+        game = data.get("gameName") or "Unknown"
         online = is_account_online(data, now)
-        if online:
-            game = data.get("gameName") or "Unknown"
-            by_game.setdefault(game, []).append((label, elapsed))
-            join_entries.append((label, data.get("placeId"), data.get("jobId")))
+        elapsed = now - data.get("lastSeen", now)
+
+        if shown < MAX_STATUS_FIELDS:
+            value = (
+                f"🎮 Playing: **{game}**\n"
+                f"📶 Status: {'🟢 Online' if online else '🔴 Offline'}\n"
+                f"🕐 Last seen: {format_elapsed(elapsed)} ago"
+            )
+            embed.add_field(name=f"👤 {name}", value=value, inline=False)
+            shown += 1
         else:
-            offline_lines.append(f"**{label}** - last seen {format_elapsed(elapsed)} ago")
+            overflow += 1
 
-    for game, players in sorted(by_game.items()):
-        value = "\n".join(f"🟢 **{label}** - {format_elapsed(elapsed)} ago" for label, elapsed in players)
-        embed.add_field(name=f"🎮 {game}", value=value, inline=False)
+        if online:
+            join_entries.append((name, data.get("placeId"), data.get("jobId")))
 
-    if offline_lines:
-        embed.add_field(name="🔴 Offline", value="\n".join(offline_lines), inline=False)
+    if overflow > 0:
+        embed.add_field(
+            name="⚠️ More accounts",
+            value=f"+{overflow} more not shown (Discord's 25-field limit per message).",
+            inline=False,
+        )
 
     view = build_join_view(join_entries)
     return embed, view
@@ -91,7 +111,7 @@ def build_grouped_dashboard():
 
 def build_user_list():
     """Quick flat online/offline list, no game info - the faster-glance
-    alternative to the full grouped dashboard."""
+    alternative to the full Status view."""
     embed = discord.Embed(title="👥 Accounts", color=0xFF8C28)
     if not accounts:
         embed.description = "No accounts reporting yet."
@@ -100,9 +120,10 @@ def build_user_list():
     now = time.time()
     lines = []
     for label, data in sorted(accounts.items()):
+        name = display_name(label, data)
         online = is_account_online(data, now)
         status = "🟢 Online" if online else "🔴 Offline"
-        lines.append(f"**{label}** - {status}")
+        lines.append(f"**{name}** - {status}")
     embed.description = "\n".join(lines)
     return embed
 
@@ -111,14 +132,20 @@ class PanelView(discord.ui.View):
     """Buttons here use fixed custom_ids and timeout=None, which is what
     makes them keep working forever - including across bot restarts -
     once registered via bot.add_view() in on_ready, rather than being tied
-    to one specific message the way the old auto-refresh loop was."""
+    to one specific message.
+
+    TO ADD A NEW BUTTON LATER: copy one of the @discord.ui.button blocks
+    below, give it a NEW unique custom_id (never reuse or remove an old
+    one - people may still have an existing panel message with the old
+    button visible), write its handler, done. No other changes needed
+    anywhere else in the file."""
 
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="📊 Dashboard", style=discord.ButtonStyle.success, custom_id="panel_dashboard_v1")
-    async def dashboard_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed, view = build_grouped_dashboard()
+    @discord.ui.button(label="📡 Status", style=discord.ButtonStyle.success, custom_id="panel_status_v2")
+    async def status_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed, view = build_status_embed()
         if view:
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         else:
@@ -148,6 +175,8 @@ async def handle_report(request):
         "placeId": data.get("placeId"),
         "jobId": data.get("jobId"),
         "gameName": data.get("gameName", "Unknown"),
+        "playerName": data.get("playerName"),  # real Roblox username, optional for backward-compat
+        "userId": data.get("userId"),
         "lastSeen": time.time(),
         "intervalSeconds": data.get("intervalSeconds", 300),
     }
@@ -192,22 +221,6 @@ async def panel(ctx):
         color=0xFF8C28,
     )
     await ctx.send(embed=embed, view=PanelView())
-
-
-@bot.command()
-async def dashboard(ctx):
-    """Text-command equivalent of the Dashboard button."""
-    embed, view = build_grouped_dashboard()
-    if view:
-        await ctx.send(embed=embed, view=view)
-    else:
-        await ctx.send(embed=embed)
-
-
-@bot.command()
-async def userlist(ctx):
-    """Text-command equivalent of the User List button."""
-    await ctx.send(embed=build_user_list())
 
 
 @bot.command()
