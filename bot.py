@@ -17,7 +17,13 @@ MAX_JOIN_BUTTONS = 25   # Discord's hard cap on components per view (5 rows x 5)
 MAX_STATUS_FIELDS = 24  # leave 1 slot free for an "+N more" notice, embeds cap at 25 fields
 
 # ---- STATE ----
-accounts = {}  # label -> {placeId, jobId, gameName, playerName, userId, lastSeen, intervalSeconds}
+# Keyed by the account's stable Roblox userId (as a string) when the
+# reporter sends one - never a manually-typed label anymore, so nothing
+# needs to be kept in sync if an alt gets renamed. Falls back to playerName,
+# then to a legacy "label" field, only for reports from an older reporter
+# script that predates userId - keeps old accounts from erroring out or
+# vanishing the moment the bot updates.
+accounts = {}  # key -> {placeId, jobId, gameName, playerName, userId, lastSeen, intervalSeconds}
 
 intents = discord.Intents.default()
 intents.message_content = True  # needed for the !panel/!remove text commands
@@ -39,11 +45,11 @@ def is_account_online(data, now):
     return (now - data.get("lastSeen", 0)) <= data.get("intervalSeconds", 300) * OFFLINE_TIMEOUT_MULTIPLIER
 
 
-def display_name(label, data):
-    """Prefer the real Roblox username the reporter script sends. Falls back
-    to the account's label if an older reporter script (pre-username) is
-    still running on that account, so nothing errors or goes blank for it."""
-    return data.get("playerName") or label
+def display_name(key, data):
+    """Always prefer the real Roblox username. Only falls back to the
+    internal key (a userId, or a legacy label for very old reports) if
+    playerName is somehow missing, so nothing ever renders blank."""
+    return data.get("playerName") or key
 
 
 def build_join_view(entries_with_join_info):
@@ -63,11 +69,10 @@ def build_join_view(entries_with_join_info):
 
 def build_status_embed():
     """One field per account: what they're playing, online/offline, and how
-    long since they last reported. Matches the reference panel's per-item
-    'Stats' card layout. Capped at MAX_STATUS_FIELDS so a large number of
-    accounts can never exceed Discord's 25-field embed limit and error out -
-    it always renders something for everyone, even if that means a trailing
-    '+N more' notice instead of a crash."""
+    long since they last reported. Capped at MAX_STATUS_FIELDS so a large
+    number of accounts can never exceed Discord's 25-field embed limit and
+    error out - it always renders something for everyone, even if that
+    means a trailing '+N more' notice instead of a crash."""
     embed = discord.Embed(title="📡 Account Status", color=0xFF8C28)
     if not accounts:
         embed.description = "No accounts reporting yet."
@@ -78,8 +83,8 @@ def build_status_embed():
     shown = 0
     overflow = 0
 
-    for label, data in sorted(accounts.items()):
-        name = display_name(label, data)
+    for key, data in sorted(accounts.items(), key=lambda kv: display_name(kv[0], kv[1]).lower()):
+        name = display_name(key, data)
         game = data.get("gameName") or "Unknown"
         online = is_account_online(data, now)
         elapsed = now - data.get("lastSeen", now)
@@ -119,8 +124,8 @@ def build_user_list():
 
     now = time.time()
     lines = []
-    for label, data in sorted(accounts.items()):
-        name = display_name(label, data)
+    for key, data in sorted(accounts.items(), key=lambda kv: display_name(kv[0], kv[1]).lower()):
+        name = display_name(key, data)
         online = is_account_online(data, now)
         status = "🟢 Online" if online else "🔴 Offline"
         lines.append(f"**{name}** - {status}")
@@ -167,16 +172,23 @@ async def handle_report(request):
     if data.get("secret") != REPORT_SECRET:
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    label = data.get("label")
-    if not label:
-        return web.json_response({"error": "missing label"}, status=400)
+    # Identity priority: userId (stable, survives renames) > playerName >
+    # legacy "label" field, so an older reporter script still gets stored
+    # under SOMETHING instead of being rejected outright.
+    user_id = data.get("userId")
+    player_name = data.get("playerName")
+    legacy_label = data.get("label")
 
-    accounts[label] = {
+    key = str(user_id) if user_id else (player_name or legacy_label)
+    if not key:
+        return web.json_response({"error": "missing userId/playerName/label - nothing to identify this account by"}, status=400)
+
+    accounts[key] = {
         "placeId": data.get("placeId"),
         "jobId": data.get("jobId"),
         "gameName": data.get("gameName", "Unknown"),
-        "playerName": data.get("playerName"),  # real Roblox username, optional for backward-compat
-        "userId": data.get("userId"),
+        "playerName": player_name or legacy_label,
+        "userId": user_id,
         "lastSeen": time.time(),
         "intervalSeconds": data.get("intervalSeconds", 300),
     }
@@ -224,13 +236,15 @@ async def panel(ctx):
 
 
 @bot.command()
-async def remove(ctx, label: str):
-    """Remove an account from the dashboard permanently (e.g. retired for good)."""
-    if label in accounts:
-        del accounts[label]
-        await ctx.send(f"Removed `{label}` from the dashboard.")
+async def remove(ctx, key: str):
+    """Remove an account from the dashboard permanently (e.g. retired for
+    good). Use the username shown on the Status panel - or the userId if
+    you need to disambiguate."""
+    if key in accounts:
+        del accounts[key]
+        await ctx.send(f"Removed `{key}` from the dashboard.")
     else:
-        await ctx.send(f"No account labeled `{label}` found.")
+        await ctx.send(f"No account found for `{key}`.")
 
 
 async def main():
