@@ -119,14 +119,14 @@ def build_panel_embed():
         description=(
             "Use the buttons below.\n"
             "• **Status** — live list with join links\n"
-            "• **Script** — copy the Roblox reporter (desktop code block)\n"
+            "• **Script** — copy the DivineSoulScript (desktop code block)\n"
             "• **Script (mobile)** — same script in a tap-to-select field, easier to copy on phone\n"
             "• **Refresh panel** — re-post this panel"
         ),
     )
 
 
-class ScriptCopyModal(discord.ui.Modal, title="Report script"):
+class ScriptCopyModal(discord.ui.Modal, title="DivineSoul Script"):
     """A text-field version of the report script.
 
     Discord's mobile app doesn't give code blocks a tap-to-copy button the
