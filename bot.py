@@ -223,30 +223,98 @@ def save_theme():
 
 
 
-def generate_default_icon(size: int, accent_hex: str) -> bytes:
-    """The app's icon: a rounded square filled ENTIRELY with the current accent color
-    - not a two-tone gradient - so changing the accent recolors the whole
-    icon, and that's exactly what gets served for /icon-192.png/512.png,
-    which is what the manifest points the "Add to Home Screen" icon at."""
-    hex_color = accent_hex.lstrip("#")
+def lighten_hex(hex_color: str, factor: float = 0.25) -> str:
+    """Blend accent toward white for the top of the icon gradient."""
+    hex_color = hex_color.lstrip("#")
     r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    r, g, b = (min(255, int(c + (255 - c) * factor)) for c in (r, g, b))
+    return f"#{r:02x}{g:02x}{b:02x}"
 
-    img = Image.new("RGBA", (size, size), (r, g, b, 255))
+
+def _hex_to_rgb(hex_color: str) -> tuple:
+    hex_color = hex_color.lstrip("#")
+    return int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+
+
+def _load_icon_font(size: int):
+    """Prefer a real bold TTF so "DS" matches the polished brand mark;
+    fall back to Pillow's default bitmap font if none are available."""
+    font_size = max(12, int(size * 0.42))
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/lato/Lato-Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/SFNS.ttf",
+    ]
+    for path in candidates:
+        if Path(path).is_file():
+            try:
+                return ImageFont.truetype(path, font_size)
+            except Exception:
+                continue
+    try:
+        return ImageFont.load_default(size=font_size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def generate_default_icon(size: int, accent_hex: str) -> bytes:
+    """Polished app icon matching the brand mark style: soft vertical
+    gradient from a lightened accent (top) to a darkened accent (bottom),
+    iOS-style rounded corners, thin light rim, and bold centered "DS"
+    with a subtle drop shadow. All fills are derived from the saved
+    accent so changing the theme recolors the whole icon."""
+    top = _hex_to_rgb(lighten_hex(accent_hex, 0.22))
+    bot = _hex_to_rgb(darken_hex(accent_hex, 0.28))
+    text_fill = contrast_text_color(accent_hex)
+    # Soft shadow: dark on light accents, lighter veil on dark accents
+    shadow_fill = (0, 0, 0, 90) if text_fill == "#1a1005" else (0, 0, 0, 70)
+
+    # Vertical gradient base
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    px = img.load()
+    for y in range(size):
+        t = y / max(size - 1, 1)
+        r = int(top[0] + (bot[0] - top[0]) * t)
+        g = int(top[1] + (bot[1] - top[1]) * t)
+        b = int(top[2] + (bot[2] - top[2]) * t)
+        for x in range(size):
+            px[x, y] = (r, g, b, 255)
+
+    radius = int(size * 0.22)
     mask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size, size), radius=int(size * 0.22), fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=255)
     img.putalpha(mask)
 
+    # Thin light rim (like the reference icon's pale edge)
+    rim = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    rim_draw = ImageDraw.Draw(rim)
+    inset = max(1, size // 64)
+    rim_draw.rounded_rectangle(
+        (inset, inset, size - 1 - inset, size - 1 - inset),
+        radius=max(1, radius - inset),
+        outline=(255, 255, 255, 70),
+        width=max(1, size // 90),
+    )
+    img = Image.alpha_composite(img, rim)
+
     draw = ImageDraw.Draw(img)
-    text_color = contrast_text_color(accent_hex)
     text = "DS"
-    try:
-        font = ImageFont.load_default(size=int(size * 0.42))
-    except TypeError:
-        # Older Pillow: load_default() doesn't take a size argument.
-        font = ImageFont.load_default()
+    font = _load_icon_font(size)
     bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((size - tw) / 2 - bbox[0], (size - th) / 2 - bbox[1]), text, font=font, fill=text_color)
+    tx = (size - tw) / 2 - bbox[0]
+    ty = (size - th) / 2 - bbox[1] - size * 0.02  # slight optical lift
+
+    # Drop shadow then main glyph
+    shadow_off = max(1, size // 64)
+    draw.text((tx, ty + shadow_off), text, font=font, fill=shadow_fill)
+    draw.text((tx, ty), text, font=font, fill=text_fill)
+
+    # Re-apply rounded mask so rim/text never square the corners
+    img.putalpha(mask)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
