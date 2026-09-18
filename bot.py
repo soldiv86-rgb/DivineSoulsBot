@@ -150,6 +150,10 @@ def resolve_theme() -> dict:
         # mode instead of a single hardcoded dark color (previously
         # #1e1a14, which only ever looked right in dark mode).
         "accentTint": blend_hex(accent, palette["sidebar"], 0.14),
+        # Readable text/glyph color ON TOP of the accent (dark text on light
+        # accents, white text on dark/black accents) - same rule as the
+        # generated icon. Used by Unlock / Save / Join / active mode buttons.
+        "accentText": contrast_text_color(accent),
         "mode": mode,
         **palette,
         **STATUS_COLORS,
@@ -744,6 +748,7 @@ PWA_HTML = """<!DOCTYPE html>
           accent: "var(--accent)",
           accent2: "var(--accent2)",
           accenttint: "var(--accentTint)",
+          accenttext: "var(--accentText)",
           bgmain: "var(--bgmain)",
           sidebar: "var(--sidebar)",
           card: "var(--card)",
@@ -766,6 +771,7 @@ PWA_HTML = """<!DOCTYPE html>
     --accent: #FF8C28;
     --accent2: #c9631a;
     --accentTint: #262119;
+    --accentText: #1a1005;
     --bgmain: #0d0d0f;
     --sidebar: #111113;
     --card: #17171a;
@@ -794,7 +800,7 @@ PWA_HTML = """<!DOCTYPE html>
   <p class="text-muted text-[13px] text-center max-w-[260px]">Welcome to Divine Soul Dashboard! Enter your dashboard key to view account status.</p>
   <input id="keyInput" type="password" placeholder="Dashboard key" autocomplete="off"
     class="bg-card border border-borderc text-text px-3.5 py-3 rounded-[10px] text-[15px] w-full max-w-[280px] outline-none focus:border-accent">
-  <button id="keySubmit" class="bg-accent text-[#1a1005] font-bold border-none px-5 py-3 rounded-[10px] text-[15px] cursor-pointer">Unlock</button>
+  <button id="keySubmit" class="bg-accent text-accenttext font-bold border-none px-5 py-3 rounded-[10px] text-[15px] cursor-pointer">Unlock</button>
 </div>
 
 <div id="app" class="hidden flex-1 min-h-screen">
@@ -887,7 +893,7 @@ PWA_HTML = """<!DOCTYPE html>
       <div class="text-xs uppercase tracking-wide text-muted mb-2">Accent color</div>
       <div class="flex items-center gap-3">
         <input type="color" id="accentColorInput" class="w-11 h-11 rounded-lg border border-borderc bg-transparent cursor-pointer p-0">
-        <button id="themeSaveBtn" class="flex-1 bg-accent text-[#1a1005] font-bold text-sm px-3 py-2.5 rounded-lg cursor-pointer">Save accent</button>
+        <button id="themeSaveBtn" class="flex-1 bg-accent text-accenttext font-bold text-sm px-3 py-2.5 rounded-lg cursor-pointer">Save accent</button>
         <button id="themeResetBtn" class="bg-transparent border border-borderc text-muted text-sm px-3 py-2.5 rounded-lg cursor-pointer">Reset</button>
       </div>
       <p id="themeStatus" class="text-xs text-muted mt-3"></p>
@@ -955,7 +961,7 @@ function buildGameTabs(accounts) {
     const state = active
       ? "bg-accenttint border-accent text-accent"
       : "bg-card border-borderc text-muted";
-    const badgeState = active ? "bg-accent text-[#1a1005]" : "bg-borderc text-muted";
+    const badgeState = active ? "bg-accent text-accenttext" : "bg-borderc text-muted";
     return `
       <div class="tab ${base} ${state}" data-game="${escapeHtml(t.key)}">
         ${escapeHtml(t.label)} <span class="text-[10.5px] px-1.5 py-0.5 rounded-full ${badgeState}">${t.count}</span>
@@ -1002,7 +1008,7 @@ function render(data) {
     const dotClass = a.online ? "bg-online shadow-[0_0_6px_#57F287]" : "bg-offline";
     const statusText = a.online ? "online" : formatElapsed(a.lastSeenSecondsAgo) + " ago";
     const joinBtn = a.online && a.joinUrl
-      ? `<a class="bg-accent text-[#1a1005] font-bold text-xs px-3 py-2 rounded-lg no-underline flex-shrink-0" href="${a.joinUrl}">Join</a>`
+      ? `<a class="bg-accent text-accenttext font-bold text-xs px-3 py-2 rounded-lg no-underline flex-shrink-0" href="${a.joinUrl}">Join</a>`
       : "";
     return `
       <div class="row bg-card border border-borderc rounded-xl px-3.5 py-3 flex items-center gap-3">
@@ -1094,7 +1100,7 @@ function setModeButtonStyles() {
   modeButtons.forEach((btn) => {
     const active = currentTheme && btn.getAttribute("data-mode") === currentTheme.mode;
     btn.classList.toggle("bg-accent", !!active);
-    btn.classList.toggle("text-[#1a1005]", !!active);
+    btn.classList.toggle("text-accenttext", !!active);
     btn.classList.toggle("border-accent", !!active);
     btn.classList.toggle("bg-transparent", !active);
     btn.classList.toggle("text-muted", !active);
