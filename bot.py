@@ -558,10 +558,10 @@ def get_icon_version() -> str:
     Android is forced to re-fetch it instead of reusing a cached copy for
     that same "/icon-192.png" URL.
 
-    The icon is now a fixed brand logo (no longer generated from the
-    accent color), so this is just a constant. Bump ICON_VERSION (defined
-    next to ICON_192_B64/ICON_512_B64 above) if you ever swap in new icon
-    artwork, so installed PWAs pick up the change.
+    When Pillow is available the icon is generated from the saved accent
+    color, so the version includes that accent. Without Pillow we fall
+    back to the fixed base64 logos and only ICON_VERSION matters - bump
+    that if you swap in new fixed artwork.
 
     This does NOT fix iOS. Safari's "Add to Home Screen" captures the
     icon once at add-time with no re-check mechanism at all - that
@@ -569,6 +569,9 @@ def get_icon_version() -> str:
     after installation, so it genuinely requires deleting and re-adding
     to pick up any icon change. That's an Apple platform limitation, not
     something fixable from this codebase."""
+    if HAS_PIL:
+        accent = theme.get("accent", DEFAULT_THEME["accent"]).lstrip("#").lower()
+        return f"accent-{accent}-v{ICON_VERSION}"
     return f"fixed-{ICON_VERSION}"
 
 
@@ -1044,14 +1047,18 @@ function applyTheme(t) {
   if (themeColorMeta) themeColorMeta.setAttribute("content", t.bgmain);
   if (accentColorInput && t.accent) accentColorInput.value = t.accent;
   setModeButtonStyles();
+  // Always re-fetch icons so the sidebar/gate mark matches the current
+  // accent (server generates the PNG from theme.accent when Pillow is on).
+  refreshIconImages(t && t.accent);
 }
 
 // Cache-bust every place the icon is shown (the sidebar brand mark and the
-// lock-screen mark) after an accent change/reset. The icon is generated
-// server-side from the accent color, so it needs a fresh fetch whenever
-// the accent changes.
-function refreshIconImages() {
-  const bust = "/icon-192.png?t=" + Date.now();
+// lock-screen mark). The icon is generated server-side from the accent
+// color, so include the accent in the query string for a stable bust key
+// plus a timestamp so even aggressive caches can't serve a stale file.
+function refreshIconImages(accent) {
+  const a = (accent || (currentTheme && currentTheme.accent) || "").replace("#", "");
+  const bust = "/icon-192.png?v=" + encodeURIComponent(a) + "&t=" + Date.now();
   if (brandLogo) brandLogo.src = bust;
   if (gateLogo) gateLogo.src = bust;
 }
@@ -1205,18 +1212,32 @@ async def handle_sw(request):
     return web.Response(text=SW_JS, content_type="application/javascript")
 
 
+def _icon_response(size: int) -> web.Response:
+    """Serve a PNG icon. With Pillow: generate from the saved accent so the
+    mark always matches the theme. Without Pillow: fixed base64 fallback.
+    Cache-Control is short + must-revalidate so browsers/SW don't keep an
+    old accent-colored icon after the user changes the color."""
+    if HAS_PIL:
+        accent = theme.get("accent", DEFAULT_THEME["accent"])
+        body = generate_default_icon(size, accent)
+    else:
+        body = base64.b64decode(ICON_192_B64 if size <= 192 else ICON_512_B64)
+    return web.Response(
+        body=body,
+        content_type="image/png",
+        headers={
+            "Cache-Control": "no-cache, must-revalidate",
+            "ETag": f'"{get_icon_version()}"',
+        },
+    )
+
+
 async def handle_icon_192(request):
-    # Fixed brand logo now - always served as-is, regardless of the
-    # current accent color. (Previously this regenerated an accent-colored
-    # placeholder icon via PIL when available; that's no longer used.)
-    return web.Response(body=base64.b64decode(ICON_192_B64), content_type="image/png")
+    return _icon_response(192)
 
 
 async def handle_icon_512(request):
-    # Fixed brand logo now - always served as-is, regardless of the
-    # current accent color. (Previously this regenerated an accent-colored
-    # placeholder icon via PIL when available; that's no longer used.)
-    return web.Response(body=base64.b64decode(ICON_512_B64), content_type="image/png")
+    return _icon_response(512)
 
 
 # ---- HTTP endpoints ----
