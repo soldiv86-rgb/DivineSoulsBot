@@ -119,39 +119,10 @@ def build_panel_embed():
         description=(
             "Use the buttons below.\n"
             "• **Status** — live list with join links\n"
-            "• **Script** — copy the DivineSoulScript (desktop code block)\n"
-            "• **Script (mobile)** — same script in a tap-to-select field, easier to copy on phone\n"
+            "• **Script** — copy the Roblox reporter\n"
             "• **Refresh panel** — re-post this panel"
         ),
     )
-
-
-class ScriptCopyModal(discord.ui.Modal, title="DivineSoul Script"):
-    """A text-field version of the report script.
-
-    Discord's mobile app doesn't give code blocks a tap-to-copy button the
-    way desktop does - selecting text inside one on a phone means a fiddly
-    long-press-and-drag across every line. A modal text input is a normal
-    OS text field, so the standard long-press -> Select All -> Copy works
-    in one tap. Nothing here is submitted anywhere; the field just holds
-    the text so it can be copied, and closing/cancelling the modal is the
-    expected way to dismiss it.
-    """
-
-    script = discord.ui.TextInput(
-        label="Tap the field, Select All, then Copy",
-        style=discord.TextStyle.paragraph,
-        default=REPORT_LOADSTRING,
-        required=False,
-        max_length=4000,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        # There's nothing to save - this modal exists purely so the script
-        # text can be selected and copied. Submitting just closes it quietly.
-        await interaction.response.send_message(
-            "👍 You can paste that into your executor now.", ephemeral=True
-        )
 
 
 class StatusView(discord.ui.View):
@@ -343,13 +314,12 @@ class PanelView(discord.ui.View):
     async def script_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         body = (
             "Run this in your executor on each account:\n"
-            f"```lua\n{REPORT_LOADSTRING}\n```"
+            f"```lua\n{REPORT_LOADSTRING}\n```\n"
+            "On mobile, tap-hold the line below instead - it's a single line, "
+            "so \"Copy\" grabs the whole thing in one go:\n"
+            f"`{REPORT_LOADSTRING}`"
         )
         await interaction.response.send_message(body, ephemeral=True)
-
-    @discord.ui.button(label="📱 Script (mobile)", style=discord.ButtonStyle.secondary, custom_id="panel_script_mobile_v1")
-    async def script_mobile_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ScriptCopyModal())
 
     @discord.ui.button(label="🔄 Refresh panel", style=discord.ButtonStyle.secondary, custom_id="panel_repost_v1")
     async def refresh_panel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
