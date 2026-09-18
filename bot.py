@@ -14,11 +14,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# Optional: only used to properly resize a custom-uploaded icon to the
-# 192x192/512x512 sizes the manifest declares. If Pillow isn't installed,
-# custom icon uploads still work - the same uploaded image is just served
-# as-is for both sizes instead of being resized. Add "Pillow" to
-# requirements.txt for the sharper, correctly-sized result.
+# Needed to draw the default app icon in the current accent color. If Pillow
+# isn't installed, the app falls back to a fixed built-in icon that does NOT
+# follow the accent color. Add "Pillow" to requirements.txt to keep the icon
+# in sync with the accent.
 try:
     from PIL import Image, ImageDraw, ImageFont
     HAS_PIL = True
@@ -48,10 +47,6 @@ DATA_FILE = Path(os.environ.get("DATA_FILE", "accounts.json"))
 
 # Same persistence caveat as DATA_FILE above applies here too.
 THEME_FILE = Path(os.environ.get("THEME_FILE", "theme.json"))
-ICON_192_FILE = Path(os.environ.get("ICON_192_FILE", "custom_icon_192.bin"))
-ICON_512_FILE = Path(os.environ.get("ICON_512_FILE", "custom_icon_512.bin"))
-ICON_META_FILE = Path(os.environ.get("ICON_META_FILE", "custom_icon_meta.json"))
-MAX_ICON_UPLOAD_BYTES = 3 * 1024 * 1024  # 3MB raw image, generous for an icon
 
 # ---- BRAND / UI ----
 # One accent color used everywhere so every embed reads as the same product
@@ -226,67 +221,10 @@ def save_theme():
         print(f"Failed to save theme to {THEME_FILE}: {e}", flush=True)
 
 
-def sniff_image_content_type(data: bytes):
-    """Identify an image by its magic bytes rather than trusting a
-    client-supplied filename/extension, since the upload endpoint accepts
-    arbitrary bytes over JSON. Returns None if it doesn't look like a
-    recognized image format, so the caller can reject it."""
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
-        return "image/gif"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
-
-
-def save_custom_icon(raw: bytes) -> None:
-    """Persist an uploaded icon. With Pillow available, produces properly
-    resized/cropped 192x192 and 512x512 PNGs (a good icon shouldn't look
-    stretched or off-center just because the upload wasn't square). Without
-    Pillow, falls back to storing the same original bytes for both sizes -
-    still works, just relies on the browser/OS to scale it."""
-    if HAS_PIL:
-        img = Image.open(io.BytesIO(raw)).convert("RGBA")
-        side = min(img.size)
-        left = (img.width - side) // 2
-        top = (img.height - side) // 2
-        square = img.crop((left, top, left + side, top + side))
-        for size, path in ((192, ICON_192_FILE), (512, ICON_512_FILE)):
-            resized = square.resize((size, size), Image.LANCZOS)
-            buf = io.BytesIO()
-            resized.save(buf, format="PNG")
-            path.write_bytes(buf.getvalue())
-        content_type = "image/png"
-    else:
-        ICON_192_FILE.write_bytes(raw)
-        ICON_512_FILE.write_bytes(raw)
-        content_type = sniff_image_content_type(raw) or "image/png"
-    with open(ICON_META_FILE, "w") as f:
-        json.dump({"content_type": content_type}, f)
-
-
-def clear_custom_icon() -> None:
-    for path in (ICON_192_FILE, ICON_512_FILE, ICON_META_FILE):
-        try:
-            path.unlink(missing_ok=True)
-        except Exception as e:
-            print(f"Failed to remove {path}: {e}", flush=True)
-
-
-def get_icon_content_type() -> str:
-    try:
-        with open(ICON_META_FILE, "r") as f:
-            return json.load(f).get("content_type", "image/png")
-    except Exception:
-        return "image/png"
 
 
 def generate_default_icon(size: int, accent_hex: str) -> bytes:
-    """The app's default icon (used whenever nobody has uploaded a custom
-    image): a rounded square filled ENTIRELY with the current accent color
+    """The app's icon: a rounded square filled ENTIRELY with the current accent color
     - not a two-tone gradient - so changing the accent recolors the whole
     icon, and that's exactly what gets served for /icon-192.png/512.png,
     which is what the manifest points the "Add to Home Screen" icon at."""
@@ -615,8 +553,7 @@ ICON_192_B64 = "iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAYTElEQVR4nO2deWwc
 ICON_512_B64 = "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"
 def get_icon_version() -> str:
     """A short fingerprint that changes whenever the served icon actually
-    would change - a new custom upload, a custom-icon reset, or a new
-    accent color. Used as a ?v= query param on the manifest's icon URLs.
+    would change - i.e. whenever the accent color changes. Used as a ?v= query param on the manifest's icon URLs.
 
     Why this matters: Chrome/Android periodically re-checks an installed
     PWA's manifest for changes, but it caches each icon FILE by its URL -
@@ -629,13 +566,8 @@ def get_icon_version() -> str:
     icon once at add-time with no re-check mechanism at all - that
     platform has no API for a web app to update its own home-screen icon
     after installation, so it genuinely requires deleting and re-adding
-    to pick up ANY icon change, custom or accent-based. That's an Apple
+    to pick up ANY icon change (such as a new accent color). That's an Apple
     platform limitation, not something fixable from this codebase."""
-    if ICON_192_FILE.exists():
-        try:
-            return f"custom-{int(ICON_192_FILE.stat().st_mtime)}"
-        except Exception:
-            return "custom"
     return f"default-{theme.get('accent', DEFAULT_THEME['accent']).lstrip('#')}"
 
 
@@ -666,7 +598,7 @@ SW_JS = """
 // browser tab (which just hits the network) shows. Network-first for the
 // shell below fixes that; bumping the name here also forces any previously
 // installed app to drop its stale cache on this deploy.
-const CACHE_NAME = "ds-dashboard-v4";
+const CACHE_NAME = "ds-dashboard-v5";
 const SHELL = ["/dashboard", "/manifest.json", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
@@ -872,21 +804,6 @@ PWA_HTML = """<!DOCTYPE html>
     </div>
 
     <div class="mb-5">
-      <div class="text-xs uppercase tracking-wide text-muted mb-2">App icon</div>
-      <div class="flex items-center gap-3">
-        <img id="iconPreview" src="/icon-192.png" class="w-14 h-14 rounded-xl border border-borderc object-cover" alt="Current icon">
-        <div class="flex flex-col gap-1.5">
-          <label class="bg-accent text-[#1a1005] font-bold text-xs px-3 py-2 rounded-lg cursor-pointer text-center">
-            Choose image
-            <input id="iconFileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden">
-          </label>
-          <button id="iconResetBtn" class="bg-transparent border border-borderc text-muted text-xs px-3 py-2 rounded-lg cursor-pointer">Reset to default</button>
-        </div>
-      </div>
-      <p id="iconStatus" class="text-xs text-muted mt-2"></p>
-    </div>
-
-    <div class="mb-5">
       <div class="text-xs uppercase tracking-wide text-muted mb-2">Theme</div>
       <div class="flex gap-2">
         <button id="modeDarkBtn" data-mode="dark" class="mode-btn flex-1 border text-sm font-semibold px-3 py-2.5 rounded-lg cursor-pointer">Dark</button>
@@ -1086,17 +1003,13 @@ document.querySelectorAll(".navitem[data-filter]").forEach((el) => {
   });
 });
 
-// ---- Appearance settings (accent color + light/dark mode + custom icon) ----
+// ---- Appearance settings (accent color + light/dark mode) ----
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
 const settingsClose = document.getElementById("settingsClose");
 const themeColorMeta = document.getElementById("themeColorMeta");
-const iconPreview = document.getElementById("iconPreview");
 const brandLogo = document.getElementById("brandLogo");
 const gateLogo = document.getElementById("gateLogo");
-const iconFileInput = document.getElementById("iconFileInput");
-const iconResetBtn = document.getElementById("iconResetBtn");
-const iconStatus = document.getElementById("iconStatus");
 const themeSaveBtn = document.getElementById("themeSaveBtn");
 const themeResetBtn = document.getElementById("themeResetBtn");
 const themeStatus = document.getElementById("themeStatus");
@@ -1132,17 +1045,12 @@ function applyTheme(t) {
   setModeButtonStyles();
 }
 
-// Cache-bust every place the icon is shown (the settings preview, the
-// sidebar brand mark, and the lock-screen mark) after an accent
-// change/upload/reset - the default (non-custom) icon is generated
-// server-side from the accent color, so it needs the same refresh
-// treatment as an upload. Previously only iconPreview (the small settings
-// thumbnail) was updated, so an uploaded icon never showed up anywhere
-// you'd actually notice it - the sidebar/lock-screen marks were separate
-// hardcoded "DS" badges that never pointed at the uploaded image at all.
+// Cache-bust every place the icon is shown (the sidebar brand mark and the
+// lock-screen mark) after an accent change/reset. The icon is generated
+// server-side from the accent color, so it needs a fresh fetch whenever
+// the accent changes.
 function refreshIconImages() {
   const bust = "/icon-192.png?t=" + Date.now();
-  if (iconPreview) iconPreview.src = bust;
   if (brandLogo) brandLogo.src = bust;
   if (gateLogo) gateLogo.src = bust;
 }
@@ -1154,7 +1062,6 @@ fetch("/theme")
 
 function openSettings() {
   if (currentTheme) applyTheme(currentTheme); // make sure the picker/toggle reflect current values
-  if (iconStatus) iconStatus.textContent = "";
   if (themeStatus) themeStatus.textContent = "";
   settingsModal.classList.remove("hidden");
 }
@@ -1237,57 +1144,6 @@ if (themeResetBtn) {
   });
 }
 
-if (iconFileInput) {
-  iconFileInput.addEventListener("change", () => {
-    const file = iconFileInput.files && iconFileInput.files[0];
-    if (!file) return;
-    const key = localStorage.getItem(STORAGE_KEY);
-    iconStatus.textContent = "Uploading...";
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const res = await fetch("/icon", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ key, imageBase64: reader.result }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "upload failed");
-        refreshIconImages();
-        iconStatus.textContent = "Icon updated.";
-      } catch (e) {
-        iconStatus.textContent = "Error: " + e.message;
-      } finally {
-        iconFileInput.value = "";
-      }
-    };
-    reader.onerror = () => {
-      iconStatus.textContent = "Could not read that file.";
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-if (iconResetBtn) {
-  iconResetBtn.addEventListener("click", async () => {
-    const key = localStorage.getItem(STORAGE_KEY);
-    iconStatus.textContent = "Resetting...";
-    try {
-      const res = await fetch("/icon/reset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "reset failed");
-      refreshIconImages();
-      iconStatus.textContent = "Icon reset to default.";
-    } catch (e) {
-      iconStatus.textContent = "Error: " + e.message;
-    }
-  });
-}
-
 if (localStorage.getItem(STORAGE_KEY)) {
   showApp();
 } else {
@@ -1349,9 +1205,6 @@ async def handle_sw(request):
 
 
 async def handle_icon_192(request):
-    if ICON_192_FILE.exists():  # a custom uploaded icon always wins
-        return web.Response(body=ICON_192_FILE.read_bytes(), content_type=get_icon_content_type(),
-                             headers={"Cache-Control": "no-store"})
     if HAS_PIL:
         return web.Response(body=generate_default_icon(192, theme.get("accent", DEFAULT_THEME["accent"])),
                              content_type="image/png", headers={"Cache-Control": "no-store"})
@@ -1359,9 +1212,6 @@ async def handle_icon_192(request):
 
 
 async def handle_icon_512(request):
-    if ICON_512_FILE.exists():  # a custom uploaded icon always wins
-        return web.Response(body=ICON_512_FILE.read_bytes(), content_type=get_icon_content_type(),
-                             headers={"Cache-Control": "no-store"})
     if HAS_PIL:
         return web.Response(body=generate_default_icon(512, theme.get("accent", DEFAULT_THEME["accent"])),
                              content_type="image/png", headers={"Cache-Control": "no-store"})
@@ -1462,56 +1312,6 @@ async def handle_post_theme_reset(request):
     return web.json_response(resolve_theme())
 
 
-async def handle_post_icon(request):
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid json"}, status=400)
-
-    if not hmac.compare_digest(str(data.get("key", "")), DASHBOARD_KEY):
-        return web.json_response({"error": "unauthorized"}, status=401)
-
-    image_b64 = data.get("imageBase64", "")
-    # Accept a raw data: URL too, in case the caller forgot to strip the
-    # "data:image/png;base64," prefix that FileReader.readAsDataURL adds.
-    if "," in image_b64 and image_b64.strip().lower().startswith("data:"):
-        image_b64 = image_b64.split(",", 1)[1]
-
-    try:
-        raw = base64.b64decode(image_b64, validate=True)
-    except Exception:
-        return web.json_response({"error": "imageBase64 is not valid base64"}, status=400)
-
-    if not raw:
-        return web.json_response({"error": "empty image"}, status=400)
-    if len(raw) > MAX_ICON_UPLOAD_BYTES:
-        return web.json_response({"error": f"image too large - max {MAX_ICON_UPLOAD_BYTES // (1024 * 1024)}MB"}, status=400)
-
-    content_type = sniff_image_content_type(raw)
-    if content_type is None:
-        return web.json_response({"error": "unrecognized image format - use PNG, JPEG, GIF or WEBP"}, status=400)
-
-    try:
-        save_custom_icon(raw)
-    except Exception as e:
-        return web.json_response({"error": f"could not process image: {e}"}, status=400)
-
-    return web.json_response({"ok": True})
-
-
-async def handle_post_icon_reset(request):
-    try:
-        data = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid json"}, status=400)
-
-    if not hmac.compare_digest(str(data.get("key", "")), DASHBOARD_KEY):
-        return web.json_response({"error": "unauthorized"}, status=401)
-
-    clear_custom_icon()
-    return web.json_response({"ok": True})
-
-
 async def handle_health(request):
     return web.json_response({"ok": True, "accounts": len(accounts)})
 
@@ -1529,8 +1329,6 @@ async def start_web_server():
     app.router.add_get("/theme", handle_get_theme)
     app.router.add_post("/theme", handle_post_theme)
     app.router.add_post("/theme/reset", handle_post_theme_reset)
-    app.router.add_post("/icon", handle_post_icon)
-    app.router.add_post("/icon/reset", handle_post_icon_reset)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", WEB_SERVER_PORT)
