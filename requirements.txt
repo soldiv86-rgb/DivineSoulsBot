@@ -1,3 +1,4 @@
-     discord.py
-     aiohttp
-     Pillow
+discord.py
+aiohttp
+Pillow
+psycopg[binary]
