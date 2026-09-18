@@ -20,7 +20,7 @@ from discord.ext import commands
 # as-is for both sizes instead of being resized. Add "Pillow" to
 # requirements.txt for the sharper, correctly-sized result.
 try:
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageFont
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
@@ -68,20 +68,77 @@ FOOTER_TEXT = "DivineSoul Dashboard"
 # reporter script - keeps old accounts from erroring out mid-transition.
 accounts = {}  # key -> {placeId, jobId, gameName, playerName, userId, lastSeen, intervalSeconds}
 
-# These are the same values baked into the dashboard's Tailwind config as
-# defaults - keep the two in sync if you ever change one.
+# The user only ever controls two things: the accent color, and light vs
+# dark mode. Everything else (backgrounds, borders, muted text, the
+# gradient's second stop) is DERIVED from those two - see resolve_theme()
+# below - so there's no way to end up with an inconsistent palette.
 DEFAULT_THEME = {
     "accent": "#FF8C28",
-    "accent2": "#c9631a",
-    "bgmain": "#0d0d0f",
-    "sidebar": "#111113",
-    "card": "#17171a",
-    "borderc": "#26262a",
-    "muted": "#8a8a90",
-    "online": "#57F287",
-    "offline": "#ED4245",
+    "mode": "dark",
 }
 theme = dict(DEFAULT_THEME)  # overwritten by load_theme() at startup if a saved theme exists
+
+# Fixed structural colors per mode. accent/accent2 are layered on top of
+# these by resolve_theme() - keep this in sync with the JS copies in
+# PWA_HTML (tailwind.config + the :root defaults) if you ever tweak it.
+PALETTES = {
+    "dark": {
+        "bgmain": "#0d0d0f",
+        "sidebar": "#111113",
+        "card": "#17171a",
+        "borderc": "#26262a",
+        "muted": "#8a8a90",
+        "text": "#f2f2f2",
+    },
+    "light": {
+        "bgmain": "#f5f5f7",
+        "sidebar": "#ffffff",
+        "card": "#ffffff",
+        "borderc": "#e2e2e6",
+        "muted": "#6b6b70",
+        "text": "#141414",
+    },
+}
+# Status colors stay constant across modes - they're semantic (green/red
+# always mean online/offline), not decorative, so they shouldn't shift.
+STATUS_COLORS = {"online": "#57F287", "offline": "#ED4245"}
+
+
+def darken_hex(hex_color: str, factor: float = 0.3) -> str:
+    """Used to derive accent2 (the second stop of the brand gradient) from
+    the single accent color the user actually picks, instead of asking
+    them to manage two related colors by hand."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    r, g, b = (max(0, int(c * (1 - factor))) for c in (r, g, b))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def contrast_text_color(hex_color: str) -> str:
+    """Picks readable text/glyph color for a given background color using
+    relative luminance, so a very light user-chosen accent doesn't end up
+    with unreadable pale-on-pale icon text."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return "#1a1005" if luminance > 0.6 else "#ffffff"
+
+
+def resolve_theme() -> dict:
+    """The full palette the frontend actually renders with: the user's
+    accent plus a derived accent2, layered over whichever mode's fixed
+    palette is active. This is what GET /theme and every POST /theme*
+    response return."""
+    accent = theme.get("accent", DEFAULT_THEME["accent"])
+    mode = theme.get("mode", DEFAULT_THEME["mode"])
+    palette = PALETTES.get(mode, PALETTES["dark"])
+    return {
+        "accent": accent,
+        "accent2": darken_hex(accent, 0.3),
+        "mode": mode,
+        **palette,
+        **STATUS_COLORS,
+    }
 
 # Slash commands don't need the privileged message_content intent at all.
 intents = discord.Intents.default()
@@ -124,10 +181,13 @@ def load_theme():
         try:
             with open(THEME_FILE, "r") as f:
                 saved = json.load(f)
-            # Merge over defaults rather than replacing outright, so a theme
-            # file saved before a new color key was added doesn't leave that
-            # key missing - it just falls back to the default for that key.
-            theme = {**DEFAULT_THEME, **saved}
+            # Merge over defaults rather than replacing outright, and drop
+            # any key that isn't accent/mode - older theme.json files from
+            # before this simplification may still have the old per-color
+            # keys, which should just be ignored rather than resurrected.
+            theme = {**DEFAULT_THEME, **{k: v for k, v in saved.items() if k in DEFAULT_THEME}}
+            if theme.get("mode") not in PALETTES:
+                theme["mode"] = DEFAULT_THEME["mode"]
             print(f"Loaded custom theme from {THEME_FILE}", flush=True)
         except Exception as e:
             print(f"Could not read {THEME_FILE} ({e}) - using default theme.", flush=True)
@@ -202,6 +262,37 @@ def get_icon_content_type() -> str:
             return json.load(f).get("content_type", "image/png")
     except Exception:
         return "image/png"
+
+
+def generate_default_icon(size: int, accent_hex: str) -> bytes:
+    """The app's default icon (used whenever nobody has uploaded a custom
+    image): a rounded square filled ENTIRELY with the current accent color
+    - not a two-tone gradient - so changing the accent recolors the whole
+    icon, and that's exactly what gets served for /icon-192.png/512.png,
+    which is what the manifest points the "Add to Home Screen" icon at."""
+    hex_color = accent_hex.lstrip("#")
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+
+    img = Image.new("RGBA", (size, size), (r, g, b, 255))
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size, size), radius=int(size * 0.22), fill=255)
+    img.putalpha(mask)
+
+    draw = ImageDraw.Draw(img)
+    text_color = contrast_text_color(accent_hex)
+    text = "DS"
+    try:
+        font = ImageFont.load_default(size=int(size * 0.42))
+    except TypeError:
+        # Older Pillow: load_default() doesn't take a size argument.
+        font = ImageFont.load_default()
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((size - tw) / 2 - bbox[0], (size - th) / 2 - bbox[1]), text, font=font, fill=text_color)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 # ---- HELPERS ----
@@ -506,14 +597,15 @@ def build_manifest_json():
     """A function rather than a fixed constant, so the manifest's splash
     colors follow whatever the user has picked in the theme settings
     instead of staying stuck on the original defaults."""
+    resolved = resolve_theme()
     return json.dumps({
         "name": "DivineSoul Dashboard",
         "short_name": "DS",
         "start_url": "/dashboard",
         "scope": "/",
         "display": "standalone",
-        "background_color": theme["bgmain"],
-        "theme_color": theme["bgmain"],
+        "background_color": resolved["bgmain"],
+        "theme_color": resolved["bgmain"],
         "icons": [
             {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
             {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
@@ -607,6 +699,7 @@ PWA_HTML = """<!DOCTYPE html>
           muted: "var(--muted)",
           online: "var(--online)",
           offline: "var(--offline)",
+          text: "var(--text)",
         },
       },
     },
@@ -627,6 +720,7 @@ PWA_HTML = """<!DOCTYPE html>
     --muted: #8a8a90;
     --online: #57F287;
     --offline: #ED4245;
+    --text: #f2f2f2;
   }
   * { -webkit-tap-highlight-color: transparent; }
   /* Installed, fullscreen PWA only (not a normal browser tab, which
@@ -637,16 +731,16 @@ PWA_HTML = """<!DOCTYPE html>
   }
 </style>
 </head>
-<body class="m-0 min-h-screen bg-bgmain text-[#f2f2f2] font-sans flex flex-col">
+<body class="m-0 min-h-screen bg-bgmain text-text font-sans flex flex-col">
 
 <div id="keyGate" class="fixed inset-0 bg-bgmain flex-col items-center justify-center gap-3.5 p-6 z-20 hidden">
   <div class="flex items-center gap-2.5 mb-1">
-    <div class="w-9 h-9 rounded-[9px] bg-gradient-to-br from-accent to-accent2 flex items-center justify-center font-extrabold text-sm text-[#1a1005]">DS</div>
+    <div class="w-9 h-9 rounded-[9px] bg-accent flex items-center justify-center font-extrabold text-sm text-[#1a1005]">DS</div>
   </div>
   <h1 class="text-lg m-0">DivineSoul <span class="text-accent">Dashboard</span></h1>
   <p class="text-muted text-[13px] text-center max-w-[260px]">Welcome to Divine Soul Dashboard! Enter your dashboard key to view account status.</p>
   <input id="keyInput" type="password" placeholder="Dashboard key" autocomplete="off"
-    class="bg-card border border-borderc text-[#f2f2f2] px-3.5 py-3 rounded-[10px] text-[15px] w-full max-w-[280px] outline-none focus:border-accent">
+    class="bg-card border border-borderc text-text px-3.5 py-3 rounded-[10px] text-[15px] w-full max-w-[280px] outline-none focus:border-accent">
   <button id="keySubmit" class="bg-accent text-[#1a1005] font-bold border-none px-5 py-3 rounded-[10px] text-[15px] cursor-pointer">Unlock</button>
 </div>
 
@@ -655,7 +749,7 @@ PWA_HTML = """<!DOCTYPE html>
 
     <div class="sidebar fixed bottom-0 inset-x-0 md:relative md:inset-auto md:w-[220px] flex-shrink-0 bg-sidebar border-t md:border-t-0 md:border-r border-borderc p-1.5 md:p-[18px_12px] flex flex-row md:flex-col gap-0 md:gap-[22px] z-[15]">
       <div class="hidden md:flex items-center gap-2.5 px-1.5">
-        <div class="w-[34px] h-[34px] rounded-[9px] bg-gradient-to-br from-accent to-accent2 flex items-center justify-center font-extrabold text-[13px] text-[#1a1005] flex-shrink-0">DS</div>
+        <div class="w-[34px] h-[34px] rounded-[9px] bg-accent flex items-center justify-center font-extrabold text-[13px] text-[#1a1005] flex-shrink-0">DS</div>
         <div>
           <div class="font-bold text-sm tracking-wide">DIVINESOUL</div>
           <div class="text-[11px] text-muted">Account Dashboard</div>
@@ -667,17 +761,17 @@ PWA_HTML = """<!DOCTYPE html>
         <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-accent bg-[#1e1a14] text-accent" data-filter="all">
           <span>Accounts</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navAll">0</span>
         </div>
-        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-[#cfcfd2]" data-filter="online">
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-muted" data-filter="online">
           <span>Online</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navOnline">0</span>
         </div>
-        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-[#cfcfd2]" data-filter="offline">
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-muted" data-filter="offline">
           <span>Offline</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navOffline">0</span>
         </div>
       </div>
 
       <div class="hidden md:block">
         <div class="text-[10px] uppercase tracking-wide text-muted px-2.5 pb-2">Account</div>
-        <div id="resetKeyNav" class="flex items-center justify-between px-2.5 py-2.5 rounded-lg text-sm text-[#cfcfd2] cursor-pointer hover:bg-[#1b1b1e]">
+        <div id="resetKeyNav" class="flex items-center justify-between px-2.5 py-2.5 rounded-lg text-sm text-muted cursor-pointer hover:bg-[#1b1b1e]">
           <span>Dashboard key</span>
         </div>
       </div>
@@ -691,7 +785,7 @@ PWA_HTML = """<!DOCTYPE html>
           <div class="flex items-center gap-1.5 text-[12.5px] text-muted">
             <span class="w-[7px] h-[7px] rounded-full bg-online shadow-[0_0_5px_#57F287]"></span>Live
           </div>
-          <div class="text-xs text-[#5c5c62]" id="updatedText">updated just now</div>
+          <div class="text-xs text-muted" id="updatedText">updated just now</div>
           <button id="settingsBtn" title="Settings" class="bg-card border border-borderc text-muted text-[15px] px-2.5 py-1.5 rounded-lg cursor-pointer">&#9881;</button>
           <button id="refreshBtn" title="Refresh" class="bg-card border border-borderc text-muted text-[15px] px-2.5 py-1.5 rounded-lg cursor-pointer">&#8635;</button>
         </div>
@@ -713,8 +807,8 @@ PWA_HTML = """<!DOCTYPE html>
 
         <div id="list" class="flex flex-col gap-2"></div>
 
-        <footer class="text-center text-[#4a4a4f] text-[11px] pt-5 pb-1">
-          Auto-refreshes every 15s &middot; <button id="resetKey" class="bg-transparent border-none text-[#4a4a4f] underline text-[11px] cursor-pointer">reset key</button>
+        <footer class="text-center text-muted text-[11px] pt-5 pb-1">
+          Auto-refreshes every 15s &middot; <button id="resetKey" class="bg-transparent border-none text-muted underline text-[11px] cursor-pointer">reset key</button>
         </footer>
       </div>
     </div>
@@ -743,39 +837,22 @@ PWA_HTML = """<!DOCTYPE html>
       <p id="iconStatus" class="text-xs text-muted mt-2"></p>
     </div>
 
-    <div class="mb-2">
-      <div class="text-xs uppercase tracking-wide text-muted mb-2">Colors</div>
-      <div class="grid grid-cols-2 gap-3">
-        <label class="flex items-center justify-between gap-2 text-sm">
-          Accent
-          <input type="color" data-theme-key="accent" class="theme-color-input w-9 h-9 rounded-lg border border-borderc bg-transparent cursor-pointer p-0">
-        </label>
-        <label class="flex items-center justify-between gap-2 text-sm">
-          Background
-          <input type="color" data-theme-key="bgmain" class="theme-color-input w-9 h-9 rounded-lg border border-borderc bg-transparent cursor-pointer p-0">
-        </label>
-        <label class="flex items-center justify-between gap-2 text-sm">
-          Sidebar
-          <input type="color" data-theme-key="sidebar" class="theme-color-input w-9 h-9 rounded-lg border border-borderc bg-transparent cursor-pointer p-0">
-        </label>
-        <label class="flex items-center justify-between gap-2 text-sm">
-          Card
-          <input type="color" data-theme-key="card" class="theme-color-input w-9 h-9 rounded-lg border border-borderc bg-transparent cursor-pointer p-0">
-        </label>
-        <label class="flex items-center justify-between gap-2 text-sm">
-          Online
-          <input type="color" data-theme-key="online" class="theme-color-input w-9 h-9 rounded-lg border border-borderc bg-transparent cursor-pointer p-0">
-        </label>
-        <label class="flex items-center justify-between gap-2 text-sm">
-          Offline
-          <input type="color" data-theme-key="offline" class="theme-color-input w-9 h-9 rounded-lg border border-borderc bg-transparent cursor-pointer p-0">
-        </label>
+    <div class="mb-5">
+      <div class="text-xs uppercase tracking-wide text-muted mb-2">Theme</div>
+      <div class="flex gap-2">
+        <button id="modeDarkBtn" data-mode="dark" class="mode-btn flex-1 border text-sm font-semibold px-3 py-2.5 rounded-lg cursor-pointer">Dark</button>
+        <button id="modeLightBtn" data-mode="light" class="mode-btn flex-1 border text-sm font-semibold px-3 py-2.5 rounded-lg cursor-pointer">Light</button>
       </div>
-      <p id="themeStatus" class="text-xs text-muted mt-3"></p>
-      <div class="flex gap-2 mt-3">
-        <button id="themeSaveBtn" class="flex-1 bg-accent text-[#1a1005] font-bold text-sm px-3 py-2.5 rounded-lg cursor-pointer">Save colors</button>
+    </div>
+
+    <div class="mb-2">
+      <div class="text-xs uppercase tracking-wide text-muted mb-2">Accent color</div>
+      <div class="flex items-center gap-3">
+        <input type="color" id="accentColorInput" class="w-11 h-11 rounded-lg border border-borderc bg-transparent cursor-pointer p-0">
+        <button id="themeSaveBtn" class="flex-1 bg-accent text-[#1a1005] font-bold text-sm px-3 py-2.5 rounded-lg cursor-pointer">Save accent</button>
         <button id="themeResetBtn" class="bg-transparent border border-borderc text-muted text-sm px-3 py-2.5 rounded-lg cursor-pointer">Reset</button>
       </div>
+      <p id="themeStatus" class="text-xs text-muted mt-3"></p>
     </div>
   </div>
 </div>
@@ -795,7 +872,7 @@ let lastUpdatedAt = null;
 // Tailwind utility classes swapped in/out for active vs inactive nav items,
 // since these are toggled at runtime rather than rebuilt like the game tabs.
 const NAV_ACTIVE = ["border-accent", "bg-[#1e1a14]", "text-accent"];
-const NAV_INACTIVE = ["border-transparent", "text-[#cfcfd2]"];
+const NAV_INACTIVE = ["border-transparent", "text-muted"];
 
 function setNavActive(el, isActive) {
   el.classList.remove(...NAV_ACTIVE, ...NAV_INACTIVE);
@@ -960,7 +1037,7 @@ document.querySelectorAll(".navitem[data-filter]").forEach((el) => {
   });
 });
 
-// ---- Appearance settings (theme colors + custom icon) ----
+// ---- Appearance settings (accent color + light/dark mode + custom icon) ----
 const settingsBtn = document.getElementById("settingsBtn");
 const settingsModal = document.getElementById("settingsModal");
 const settingsClose = document.getElementById("settingsClose");
@@ -972,27 +1049,42 @@ const iconStatus = document.getElementById("iconStatus");
 const themeSaveBtn = document.getElementById("themeSaveBtn");
 const themeResetBtn = document.getElementById("themeResetBtn");
 const themeStatus = document.getElementById("themeStatus");
-const themeColorInputs = document.querySelectorAll(".theme-color-input");
+const accentColorInput = document.getElementById("accentColorInput");
+const modeButtons = document.querySelectorAll(".mode-btn");
 
 let currentTheme = null;
 
-// Pushes a theme object onto :root as CSS custom properties, so every
-// Tailwind class that points at var(--accent) etc. re-colors instantly,
-// updates the browser chrome color, and syncs the color-picker swatches.
-function applyTheme(t) {
-  currentTheme = t;
-  for (const [key, value] of Object.entries(t)) {
-    document.documentElement.style.setProperty(`--${key}`, value);
-  }
-  if (themeColorMeta) themeColorMeta.setAttribute("content", t.bgmain);
-  themeColorInputs.forEach((input) => {
-    const key = input.getAttribute("data-theme-key");
-    if (t[key]) input.value = t[key];
+function setModeButtonStyles() {
+  modeButtons.forEach((btn) => {
+    const active = currentTheme && btn.getAttribute("data-mode") === currentTheme.mode;
+    btn.classList.toggle("bg-accent", !!active);
+    btn.classList.toggle("text-[#1a1005]", !!active);
+    btn.classList.toggle("border-accent", !!active);
+    btn.classList.toggle("bg-transparent", !active);
+    btn.classList.toggle("text-muted", !active);
+    btn.classList.toggle("border-borderc", !active);
   });
 }
 
-// Cache-bust the icon <img> after an upload/reset so the browser doesn't
-// keep showing the previous image it already fetched for this URL.
+// Pushes the resolved palette onto :root as CSS custom properties, so
+// every Tailwind class that points at var(--accent)/var(--bgmain)/etc.
+// re-colors instantly, updates the browser chrome color, and refreshes
+// the accent swatch + which mode button looks active.
+function applyTheme(t) {
+  currentTheme = t;
+  for (const [key, value] of Object.entries(t)) {
+    if (key === "mode") continue; // not a CSS color - handled by setModeButtonStyles
+    document.documentElement.style.setProperty(`--${key}`, value);
+  }
+  if (themeColorMeta) themeColorMeta.setAttribute("content", t.bgmain);
+  if (accentColorInput && t.accent) accentColorInput.value = t.accent;
+  setModeButtonStyles();
+}
+
+// Cache-bust the icon <img> after an accent change/upload/reset so the
+// browser doesn't keep showing the previously fetched image for this URL
+// - the default (non-custom) icon is generated server-side from the
+// accent color, so it needs the same refresh treatment as an upload.
 function refreshIconPreview() {
   if (iconPreview) iconPreview.src = "/icon-192.png?t=" + Date.now();
 }
@@ -1003,7 +1095,7 @@ fetch("/theme")
   .catch((e) => console.error("theme load failed", e));
 
 function openSettings() {
-  if (currentTheme) applyTheme(currentTheme); // make sure swatches reflect current values
+  if (currentTheme) applyTheme(currentTheme); // make sure the picker/toggle reflect current values
   if (iconStatus) iconStatus.textContent = "";
   if (themeStatus) themeStatus.textContent = "";
   settingsModal.classList.remove("hidden");
@@ -1021,23 +1113,44 @@ if (settingsModal) {
   });
 }
 
-if (themeSaveBtn) {
-  themeSaveBtn.addEventListener("click", async () => {
+// Light/dark applies immediately on click - it's a binary preference, not
+// something that needs a separate "Save" step like the accent color.
+modeButtons.forEach((btn) => {
+  btn.addEventListener("click", async () => {
     const key = localStorage.getItem(STORAGE_KEY);
-    const colors = {};
-    themeColorInputs.forEach((input) => {
-      colors[input.getAttribute("data-theme-key")] = input.value;
-    });
+    const mode = btn.getAttribute("data-mode");
     themeStatus.textContent = "Saving...";
     try {
       const res = await fetch("/theme", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key, colors }),
+        body: JSON.stringify({ key, mode }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "save failed");
       applyTheme(data);
+      themeStatus.textContent = "Saved.";
+    } catch (e) {
+      themeStatus.textContent = "Error: " + e.message;
+    }
+  });
+});
+
+if (themeSaveBtn) {
+  themeSaveBtn.addEventListener("click", async () => {
+    const key = localStorage.getItem(STORAGE_KEY);
+    const accent = accentColorInput.value;
+    themeStatus.textContent = "Saving...";
+    try {
+      const res = await fetch("/theme", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, accent }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "save failed");
+      applyTheme(data);
+      refreshIconPreview(); // the default icon is accent-colored, so it needs to update too
       themeStatus.textContent = "Saved.";
     } catch (e) {
       themeStatus.textContent = "Error: " + e.message;
@@ -1058,6 +1171,7 @@ if (themeResetBtn) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "reset failed");
       applyTheme(data);
+      refreshIconPreview();
       themeStatus.textContent = "Reset to defaults.";
     } catch (e) {
       themeStatus.textContent = "Error: " + e.message;
@@ -1177,14 +1291,22 @@ async def handle_sw(request):
 
 
 async def handle_icon_192(request):
-    if ICON_192_FILE.exists():
-        return web.Response(body=ICON_192_FILE.read_bytes(), content_type=get_icon_content_type())
+    if ICON_192_FILE.exists():  # a custom uploaded icon always wins
+        return web.Response(body=ICON_192_FILE.read_bytes(), content_type=get_icon_content_type(),
+                             headers={"Cache-Control": "no-store"})
+    if HAS_PIL:
+        return web.Response(body=generate_default_icon(192, theme.get("accent", DEFAULT_THEME["accent"])),
+                             content_type="image/png", headers={"Cache-Control": "no-store"})
     return web.Response(body=base64.b64decode(ICON_192_B64), content_type="image/png")
 
 
 async def handle_icon_512(request):
-    if ICON_512_FILE.exists():
-        return web.Response(body=ICON_512_FILE.read_bytes(), content_type=get_icon_content_type())
+    if ICON_512_FILE.exists():  # a custom uploaded icon always wins
+        return web.Response(body=ICON_512_FILE.read_bytes(), content_type=get_icon_content_type(),
+                             headers={"Cache-Control": "no-store"})
+    if HAS_PIL:
+        return web.Response(body=generate_default_icon(512, theme.get("accent", DEFAULT_THEME["accent"])),
+                             content_type="image/png", headers={"Cache-Control": "no-store"})
     return web.Response(body=base64.b64decode(ICON_512_B64), content_type="image/png")
 
 
@@ -1231,7 +1353,7 @@ async def handle_get_theme(request):
     # Public/unauthenticated on purpose: colors aren't sensitive, and the
     # keyGate screen (shown before anyone enters DASHBOARD_KEY) needs the
     # custom theme too, so branding is consistent from the very first paint.
-    return web.json_response(theme)
+    return web.json_response(resolve_theme())
 
 
 async def handle_post_theme(request):
@@ -1243,21 +1365,23 @@ async def handle_post_theme(request):
     if not hmac.compare_digest(str(data.get("key", "")), DASHBOARD_KEY):
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    colors = data.get("colors")
-    if not isinstance(colors, dict):
-        return web.json_response({"error": "missing colors object"}, status=400)
+    # accent and mode are independent - either can be sent alone (the mode
+    # toggle applies instantly without touching the saved accent, and vice
+    # versa for the accent picker's Save button).
+    if "accent" in data:
+        accent = data["accent"]
+        if not isinstance(accent, str) or not HEX_COLOR_RE.match(accent):
+            return web.json_response({"error": "accent must be a #rrggbb hex color"}, status=400)
+        theme["accent"] = accent
 
-    updated = {}
-    for name, value in colors.items():
-        if name not in DEFAULT_THEME:
-            continue  # ignore unknown keys rather than letting the theme grow arbitrary junk
-        if not isinstance(value, str) or not HEX_COLOR_RE.match(value):
-            return web.json_response({"error": f"'{name}' must be a #rrggbb hex color"}, status=400)
-        updated[name] = value
+    if "mode" in data:
+        mode = data["mode"]
+        if mode not in PALETTES:
+            return web.json_response({"error": "mode must be 'light' or 'dark'"}, status=400)
+        theme["mode"] = mode
 
-    theme.update(updated)
     save_theme()
-    return web.json_response(theme)
+    return web.json_response(resolve_theme())
 
 
 async def handle_post_theme_reset(request):
@@ -1272,7 +1396,7 @@ async def handle_post_theme_reset(request):
     theme.clear()
     theme.update(DEFAULT_THEME)
     save_theme()
-    return web.json_response(theme)
+    return web.json_response(resolve_theme())
 
 
 async def handle_post_icon(request):
