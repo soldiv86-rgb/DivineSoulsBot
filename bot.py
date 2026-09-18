@@ -124,6 +124,21 @@ def contrast_text_color(hex_color: str) -> str:
     return "#1a1005" if luminance > 0.6 else "#ffffff"
 
 
+def blend_hex(fg_hex: str, bg_hex: str, alpha: float) -> str:
+    """Alpha-blends fg over bg (both #rrggbb) and returns the flattened
+    #rrggbb result. Used to derive a low-opacity "accent tint" for active
+    nav/tab backgrounds that stays readable in BOTH light and dark mode,
+    instead of a single hardcoded dark color that only worked for dark
+    mode (see accentTint in resolve_theme())."""
+    fg_hex, bg_hex = fg_hex.lstrip("#"), bg_hex.lstrip("#")
+    fr, fg_, fb = int(fg_hex[0:2], 16), int(fg_hex[2:4], 16), int(fg_hex[4:6], 16)
+    br, bg_, bb = int(bg_hex[0:2], 16), int(bg_hex[2:4], 16), int(bg_hex[4:6], 16)
+    r = round(fr * alpha + br * (1 - alpha))
+    g = round(fg_ * alpha + bg_ * (1 - alpha))
+    b = round(fb * alpha + bb * (1 - alpha))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def resolve_theme() -> dict:
     """The full palette the frontend actually renders with: the user's
     accent plus a derived accent2, layered over whichever mode's fixed
@@ -135,6 +150,11 @@ def resolve_theme() -> dict:
     return {
         "accent": accent,
         "accent2": darken_hex(accent, 0.3),
+        # A low-opacity accent tint blended over THIS mode's sidebar color,
+        # so "active" nav items/tabs read correctly in both light and dark
+        # mode instead of a single hardcoded dark color (previously
+        # #1e1a14, which only ever looked right in dark mode).
+        "accentTint": blend_hex(accent, palette["sidebar"], 0.14),
         "mode": mode,
         **palette,
         **STATUS_COLORS,
@@ -692,6 +712,7 @@ PWA_HTML = """<!DOCTYPE html>
         colors: {
           accent: "var(--accent)",
           accent2: "var(--accent2)",
+          accenttint: "var(--accentTint)",
           bgmain: "var(--bgmain)",
           sidebar: "var(--sidebar)",
           card: "var(--card)",
@@ -713,6 +734,7 @@ PWA_HTML = """<!DOCTYPE html>
   :root {
     --accent: #FF8C28;
     --accent2: #c9631a;
+    --accentTint: #262119;
     --bgmain: #0d0d0f;
     --sidebar: #111113;
     --card: #17171a;
@@ -735,7 +757,7 @@ PWA_HTML = """<!DOCTYPE html>
 
 <div id="keyGate" class="fixed inset-0 bg-bgmain flex-col items-center justify-center gap-3.5 p-6 z-20 hidden">
   <div class="flex items-center gap-2.5 mb-1">
-    <div class="w-9 h-9 rounded-[9px] bg-accent flex items-center justify-center font-extrabold text-sm text-[#1a1005]">DS</div>
+    <img id="gateLogo" src="/icon-192.png" alt="App icon" class="w-9 h-9 rounded-[9px] object-cover">
   </div>
   <h1 class="text-lg m-0">DivineSoul <span class="text-accent">Dashboard</span></h1>
   <p class="text-muted text-[13px] text-center max-w-[260px]">Welcome to Divine Soul Dashboard! Enter your dashboard key to view account status.</p>
@@ -749,7 +771,7 @@ PWA_HTML = """<!DOCTYPE html>
 
     <div class="sidebar fixed bottom-0 inset-x-0 md:relative md:inset-auto md:w-[220px] flex-shrink-0 bg-sidebar border-t md:border-t-0 md:border-r border-borderc p-1.5 md:p-[18px_12px] flex flex-row md:flex-col gap-0 md:gap-[22px] z-[15]">
       <div class="hidden md:flex items-center gap-2.5 px-1.5">
-        <div class="w-[34px] h-[34px] rounded-[9px] bg-accent flex items-center justify-center font-extrabold text-[13px] text-[#1a1005] flex-shrink-0">DS</div>
+        <img id="brandLogo" src="/icon-192.png" alt="App icon" class="w-[34px] h-[34px] rounded-[9px] object-cover flex-shrink-0">
         <div>
           <div class="font-bold text-sm tracking-wide">DIVINESOUL</div>
           <div class="text-[11px] text-muted">Account Dashboard</div>
@@ -758,7 +780,7 @@ PWA_HTML = """<!DOCTYPE html>
 
       <div class="flex flex-row md:flex-col flex-1 md:flex-none gap-1 md:gap-0">
         <div class="hidden md:block text-[10px] uppercase tracking-wide text-muted px-2.5 pb-2">Monitor</div>
-        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-accent bg-[#1e1a14] text-accent" data-filter="all">
+        <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-accent bg-accenttint text-accent" data-filter="all">
           <span>Accounts</span><span class="count text-[10.5px] md:text-[11.5px] text-muted" id="navAll">0</span>
         </div>
         <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-1 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-muted" data-filter="online">
@@ -871,7 +893,7 @@ let lastUpdatedAt = null;
 
 // Tailwind utility classes swapped in/out for active vs inactive nav items,
 // since these are toggled at runtime rather than rebuilt like the game tabs.
-const NAV_ACTIVE = ["border-accent", "bg-[#1e1a14]", "text-accent"];
+const NAV_ACTIVE = ["border-accent", "bg-accenttint", "text-accent"];
 const NAV_INACTIVE = ["border-transparent", "text-muted"];
 
 function setNavActive(el, isActive) {
@@ -915,9 +937,9 @@ function buildGameTabs(accounts) {
     const active = t.key === currentGame;
     const base = "flex items-center gap-1.5 text-[12.5px] px-3 py-1.5 rounded-lg cursor-pointer border";
     const state = active
-      ? "bg-[#211c15] border-[#4a3316] text-accent"
+      ? "bg-accenttint border-accent text-accent"
       : "bg-card border-borderc text-muted";
-    const badgeState = active ? "bg-accent text-[#1a1005]" : "bg-[#2a2a2e] text-[#d5d5d8]";
+    const badgeState = active ? "bg-accent text-[#1a1005]" : "bg-borderc text-muted";
     return `
       <div class="tab ${base} ${state}" data-game="${escapeHtml(t.key)}">
         ${escapeHtml(t.label)} <span class="text-[10.5px] px-1.5 py-0.5 rounded-full ${badgeState}">${t.count}</span>
@@ -1043,6 +1065,8 @@ const settingsModal = document.getElementById("settingsModal");
 const settingsClose = document.getElementById("settingsClose");
 const themeColorMeta = document.getElementById("themeColorMeta");
 const iconPreview = document.getElementById("iconPreview");
+const brandLogo = document.getElementById("brandLogo");
+const gateLogo = document.getElementById("gateLogo");
 const iconFileInput = document.getElementById("iconFileInput");
 const iconResetBtn = document.getElementById("iconResetBtn");
 const iconStatus = document.getElementById("iconStatus");
@@ -1081,12 +1105,19 @@ function applyTheme(t) {
   setModeButtonStyles();
 }
 
-// Cache-bust the icon <img> after an accent change/upload/reset so the
-// browser doesn't keep showing the previously fetched image for this URL
-// - the default (non-custom) icon is generated server-side from the
-// accent color, so it needs the same refresh treatment as an upload.
-function refreshIconPreview() {
-  if (iconPreview) iconPreview.src = "/icon-192.png?t=" + Date.now();
+// Cache-bust every place the icon is shown (the settings preview, the
+// sidebar brand mark, and the lock-screen mark) after an accent
+// change/upload/reset - the default (non-custom) icon is generated
+// server-side from the accent color, so it needs the same refresh
+// treatment as an upload. Previously only iconPreview (the small settings
+// thumbnail) was updated, so an uploaded icon never showed up anywhere
+// you'd actually notice it - the sidebar/lock-screen marks were separate
+// hardcoded "DS" badges that never pointed at the uploaded image at all.
+function refreshIconImages() {
+  const bust = "/icon-192.png?t=" + Date.now();
+  if (iconPreview) iconPreview.src = bust;
+  if (brandLogo) brandLogo.src = bust;
+  if (gateLogo) gateLogo.src = bust;
 }
 
 fetch("/theme")
@@ -1150,7 +1181,7 @@ if (themeSaveBtn) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "save failed");
       applyTheme(data);
-      refreshIconPreview(); // the default icon is accent-colored, so it needs to update too
+      refreshIconImages(); // the default icon is accent-colored, so it needs to update too
       themeStatus.textContent = "Saved.";
     } catch (e) {
       themeStatus.textContent = "Error: " + e.message;
@@ -1171,7 +1202,7 @@ if (themeResetBtn) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "reset failed");
       applyTheme(data);
-      refreshIconPreview();
+      refreshIconImages();
       themeStatus.textContent = "Reset to defaults.";
     } catch (e) {
       themeStatus.textContent = "Error: " + e.message;
@@ -1195,7 +1226,7 @@ if (iconFileInput) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "upload failed");
-        refreshIconPreview();
+        refreshIconImages();
         iconStatus.textContent = "Icon updated.";
       } catch (e) {
         iconStatus.textContent = "Error: " + e.message;
@@ -1222,7 +1253,7 @@ if (iconResetBtn) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "reset failed");
-      refreshIconPreview();
+      refreshIconImages();
       iconStatus.textContent = "Icon reset to default.";
     } catch (e) {
       iconStatus.textContent = "Error: " + e.message;
@@ -1393,8 +1424,13 @@ async def handle_post_theme_reset(request):
     if not hmac.compare_digest(str(data.get("key", "")), DASHBOARD_KEY):
         return web.json_response({"error": "unauthorized"}, status=401)
 
-    theme.clear()
-    theme.update(DEFAULT_THEME)
+    # Only the accent is reset here - light/dark mode is a separate,
+    # independent preference controlled by the mode buttons, and this
+    # endpoint is wired to the "Reset" button next to Accent Color, not a
+    # full theme reset. (Previously this did theme.clear() +
+    # theme.update(DEFAULT_THEME), which silently reset mode back to
+    # "dark" too - surprising if you were in light mode.)
+    theme["accent"] = DEFAULT_THEME["accent"]
     save_theme()
     return web.json_response(resolve_theme())
 
