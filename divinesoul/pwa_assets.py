@@ -457,7 +457,7 @@ async function postSettings(body) {
 function openDetail(a) {
   const modal = document.getElementById("detailModal");
   document.getElementById("detailTitle").textContent = a.name;
-  const hist = (a.history || []).slice().reverse().slice(0, 12);
+  const hist = (a.history || []).slice().reverse().slice(0, 24);
   const histHtml = hist.length
     ? hist.map((ts) => {
         const ago = Math.floor(Date.now() / 1000 - ts);
@@ -478,6 +478,7 @@ function openDetail(a) {
     actions.innerHTML += `<button data-copy="${escapeHtml(a.joinUrl)}" class="copy-join bg-transparent border border-borderc text-muted text-xs px-3 py-2 rounded-lg cursor-pointer">Copy join link</button>`;
   }
   actions.innerHTML += `<button data-pin="${escapeHtml(a.key)}" class="toggle-pin bg-transparent border border-borderc text-muted text-xs px-3 py-2 rounded-lg cursor-pointer">${a.pinned ? "Unpin" : "Pin"}</button>`;
+  actions.innerHTML += `<button data-remove="${escapeHtml(a.key)}" class="remove-account ml-auto bg-transparent border border-offline/50 text-offline text-xs px-3 py-2 rounded-lg cursor-pointer">Remove</button>`;
   actions.querySelectorAll(".copy-join").forEach((btn) => {
     btn.addEventListener("click", async () => {
       try {
@@ -493,6 +494,30 @@ function openDetail(a) {
       if (updated) uiSettings = updated;
       modal.classList.add("hidden");
       refresh();
+    });
+  });
+  actions.querySelectorAll(".remove-account").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const key = btn.getAttribute("data-remove");
+      // Removing just clears it from the list - if this account reports in
+      // again later it'll simply reappear, same as any brand-new account.
+      if (!confirm(`Remove ${a.name} from the dashboard? It'll come back automatically if it reports in again.`)) return;
+      btn.textContent = "Removing\u2026";
+      btn.disabled = true;
+      try {
+        const res = await fetch("/account/remove", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ accountKey: key }),
+        });
+        if (!res.ok) throw new Error("remove failed");
+        modal.classList.add("hidden");
+        refresh();
+      } catch (e) {
+        btn.textContent = "Remove";
+        btn.disabled = false;
+        alert("Couldn't remove that account - try again.");
+      }
     });
   });
   modal.classList.remove("hidden");
