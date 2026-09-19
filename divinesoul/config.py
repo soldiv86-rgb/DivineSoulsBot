@@ -21,7 +21,7 @@ THEME_FILE = Path(os.environ.get("THEME_FILE", "theme.json"))
 # resolve from wherever the bot process runs); `id` must be unique across
 # every entry; `platform` is "android" or "ios".
 APKS = [
-    # {"id": "android-main", "platform": "android", "name": "DivineSoul App", "file": Path("apk/divinesoul.apk")},
+    # {"id": "android-main", "platform": "android", "name": "Delta 2.738", "file": Path("https://delta.filenetwork.vip/android.html")},
     # {"id": "android-lite", "platform": "android", "name": "DivineSoul Lite", "file": Path("apk/divinesoul-lite.apk")},
     # {"id": "ios-main", "platform": "ios", "name": "DivineSoul App", "file": Path("apk/divinesoul.ipa")},
 ]
