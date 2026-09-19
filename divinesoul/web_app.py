@@ -27,7 +27,7 @@ from .theme import (
 from .pwa_assets import ICON_192_B64, ICON_512_B64, SW_JS, PWA_HTML
 from .discord_bot import sorted_accounts, display_name, is_account_online
 
-HISTORY_MAX = 24
+HISTORY_MAX = 24  # entries, now one per hour of activity (see handle_report) - so 24 = a day
 # 6-digit hex only: theme.py's darken/lighten/blend helpers can't parse #rgb.
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -190,7 +190,16 @@ async def handle_report(request):
     now = time.time()
     prev = state.accounts.get(key) or {}
     history = list(prev.get("history") or [])
-    history.append(now)
+    # Collapse to one entry per hour of activity instead of one per report.
+    # Reports can arrive every minute or so, so without this, HISTORY_MAX
+    # raw pings only covered the last few minutes - not useful as a
+    # "recent activity" timeline. If the last recorded entry is still
+    # within the current hour, just bump it forward instead of appending;
+    # only append when a new hour (or a gap after being offline) starts.
+    if history and (now - history[-1]) < 3600:
+        history[-1] = now
+    else:
+        history.append(now)
     history = history[-HISTORY_MAX:]
     state.accounts[key] = {
         "placeId": data.get("placeId"),
@@ -314,6 +323,33 @@ async def handle_post_settings(request):
     return web.json_response(ui)
 
 
+async def handle_remove_account(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    err = _check_dashboard_auth(request, data)
+    if err:
+        return err
+
+    key = str(data.get("accountKey", ""))
+    if not key or key not in state.accounts:
+        return web.json_response({"error": "account not found"}, status=404)
+
+    del state.accounts[key]
+    save_accounts()
+
+    # Also drop it from the pinned list, if it was pinned - otherwise it'd
+    # come back pinned the moment it reports in again.
+    ui = load_ui_settings()
+    pinned = list(ui.get("pinned") or [])
+    if key in pinned:
+        ui["pinned"] = [p for p in pinned if p != key]
+        save_ui_settings(ui)
+
+    return web.json_response({"ok": True})
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_post("/report", handle_report)
@@ -330,6 +366,7 @@ async def start_web_server():
     app.router.add_post("/theme/reset", handle_post_theme_reset)
     app.router.add_get("/settings", handle_get_settings)
     app.router.add_post("/settings", handle_post_settings)
+    app.router.add_post("/account/remove", handle_remove_account)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", WEB_SERVER_PORT)
