@@ -169,14 +169,14 @@ PWA_HTML = """<!DOCTYPE html>
       <div class="contents md:flex md:flex-col md:gap-0">
         <div class="hidden md:block text-[10px] uppercase tracking-wide text-muted px-2.5 pb-2">Tools</div>
         <div class="navitem flex-1 md:flex-none flex flex-col md:flex-row items-center justify-center md:justify-between gap-0.5 md:gap-0 px-3 md:px-2.5 py-1.5 md:py-2.5 rounded-lg text-[11px] md:text-sm cursor-pointer border-t-2 md:border-t-0 md:border-l-2 mb-0 md:mb-0.5 border-transparent text-muted" data-view="script">
-          <span>Report Script</span>
+          <span>DS Script</span>
         </div>
       </div>
 
       <div class="hidden md:block">
         <div class="text-[10px] uppercase tracking-wide text-muted px-2.5 pb-2">Account</div>
         <div id="resetKeyNav" class="flex items-center justify-between px-2.5 py-2.5 rounded-lg text-sm text-muted cursor-pointer hover:bg-[#1b1b1e]">
-          <span>Dashboard key</span>
+          <span>Dashboard Key</span>
         </div>
       </div>
     </div>
