@@ -135,8 +135,8 @@ PWA_HTML = """<!DOCTYPE html>
     <img id="gateLogo" src="/icon-192.png" alt="App icon" class="w-9 h-9 rounded-[9px] object-cover">
   </div>
   <h1 class="text-lg m-0">DivineSoul <span class="text-accent">Dashboard</span></h1>
-  <p class="text-muted text-[13px] text-center max-w-[260px]">Welcome to Divine Soul Dashboard! Enter your dashboard key to view account status.</p>
-  <input id="keyInput" type="password" placeholder="Dashboard key" autocomplete="off"
+  <p class="text-muted text-[13px] text-center max-w-[260px]">Welcome to Divine Soul Dashboard! Enter your dashboard key to view account status</p>
+  <input id="keyInput" type="password" placeholder="Dashboard Key" autocomplete="off"
     class="bg-card border border-borderc text-text px-3.5 py-3 rounded-[10px] text-[15px] w-full max-w-[280px] outline-none focus:border-accent">
   <button id="keySubmit" class="bg-accent text-accenttext font-bold border-none px-5 py-3 rounded-[10px] text-[15px] cursor-pointer">Unlock</button>
 </div>
@@ -230,17 +230,17 @@ PWA_HTML = """<!DOCTYPE html>
         <div id="scriptView" class="hidden">
           <div class="bg-card border border-borderc rounded-2xl p-4">
             <div class="flex items-center justify-between gap-2 mb-2">
-              <h2 class="text-base font-bold m-0">Report script</h2>
+              <h2 class="text-base font-bold m-0">DS Script</h2>
               <button id="scriptCopyBtn" class="bg-accent text-accenttext font-bold text-xs px-3 py-2 rounded-lg cursor-pointer flex-shrink-0">Copy script</button>
             </div>
-            <p class="text-xs text-muted mb-3">Run this in your executor on each account. It loads the reporter, which sends that account's status to this dashboard.</p>
+            <p class="text-xs text-muted mb-3">Run this in your executor on each account. It loads the DS script, which sends that account's status to this dashboard.</p>
             <pre id="scriptBox" class="bg-bgmain border border-borderc rounded-lg p-3 text-[11.5px] leading-snug overflow-x-auto whitespace-pre text-text m-0 select-all"></pre>
             <p id="scriptStatus" class="text-xs text-muted mt-2"></p>
           </div>
         </div>
 
         <footer class="text-center text-muted text-[11px] pt-5 pb-1">
-          Auto-refreshes every <span id="autoRefreshLabel">15s</span> &middot; <button id="resetKey" class="bg-transparent border-none text-muted underline text-[11px] cursor-pointer">reset key</button>
+          Auto-refreshes every <span id="autoRefreshLabel">15s</span> &middot; <button id="resetKey" class="bg-transparent border-none text-muted underline text-[11px] cursor-pointer">Reset Key</button>
         </footer>
       </div>
     </div>
